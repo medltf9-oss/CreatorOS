@@ -117,6 +117,8 @@ $secretHits = @($privateKeyHits + $tokenHits + $passwordHits | Select-Object -Un
 Add-Gate 'security.tracked-secrets' ($secretHits.Count -eq 0) $(if ($secretHits.Count -eq 0) { 'no private keys, tokens or literal signing passwords in tracked source/config files (docs and test fixtures excluded)' } else { 'review: ' + ($secretHits -join ', ') })
 
 # --------------------------------------------------------------------------------- SBOM and manifests
+# An SBOM that parses is not an SBOM. The document must describe this release, list components and
+# carry the fields a consumer needs (name, version, type), or the gate stays closed.
 $releaseDir = Join-Path $repo "releases\$ReleaseVersion"
 $sbomCandidates = @(
     (Join-Path $releaseDir 'sbom.cdx.json'),
@@ -129,13 +131,90 @@ $sbomDetail = 'no SBOM found'
 if ($sbomPath) {
     try {
         $sbom = Get-Content -LiteralPath $sbomPath -Raw | ConvertFrom-Json
-        $sbomOk = $true
-        $sbomDetail = "SBOM: $sbomPath"
+        $problems = @()
+        if ([string]$sbom.bomFormat -ne 'CycloneDX') { $problems += "bomFormat is '$($sbom.bomFormat)', expected CycloneDX" }
+        if (@('1.4', '1.5', '1.6') -notcontains [string]$sbom.specVersion) { $problems += "specVersion is '$($sbom.specVersion)'" }
+        $sbomVersion = [string]$sbom.metadata.component.version
+        if ($sbomVersion -ne $ReleaseVersion) { $problems += "metadata.component.version is '$sbomVersion', expected $ReleaseVersion" }
+        $components = @($sbom.components | Where-Object { $_ })
+        if ($components.Count -lt 1) { $problems += 'no components' }
+        $incomplete = @($components | Where-Object { -not $_.name -or -not $_.version -or -not $_.type })
+        if ($incomplete.Count -gt 0) { $problems += "$($incomplete.Count) component(s) missing name, version or type" }
+        $duplicateRefs = @($components | ForEach-Object { [string]$_.'bom-ref' } | Where-Object { $_ } | Group-Object | Where-Object { $_.Count -gt 1 })
+        if ($duplicateRefs.Count -gt 0) { $problems += "duplicate bom-ref: $((($duplicateRefs | ForEach-Object { $_.Name }) -join ', '))" }
+        if ($problems.Count -eq 0) {
+            $sbomOk = $true
+            $sbomDetail = "SBOM: $sbomPath ($($components.Count) components, CycloneDX $($sbom.specVersion), version $sbomVersion)"
+        } else {
+            $sbomDetail = "SBOM $($sbomPath) failed: $($problems -join '; ')"
+        }
     } catch {
-        $sbomDetail = "SBOM is not valid JSON: $sbomPath"
+        $sbomDetail = "SBOM is not valid JSON: $sbomPath ($($_.Exception.Message))"
     }
 }
 Add-Gate 'release.sbom' $sbomOk $sbomDetail
+
+# The pinned prerequisite manifest is what the first-run wizard verifies against. It must stay
+# machine-readable, fully pinned and consistent with the audit record a release is judged by.
+$prereqPath = Join-Path $repo 'app\backend\src\creatoros\resources\prerequisites.v1.json'
+$prereqOk = $false
+$prereqDetail = "missing: $prereqPath"
+$prereqHashesOk = $false
+$prereqHashDetail = 'not checked'
+if (Test-Path -LiteralPath $prereqPath) {
+    try {
+        $prereq = Get-Content -LiteralPath $prereqPath -Raw | ConvertFrom-Json
+        $problems = @()
+        if ([string]$prereq.schema -ne 'creatoros.prerequisites.v1') { $problems += "schema is '$($prereq.schema)'" }
+        $prereqComponents = @($prereq.components | Where-Object { $_ })
+        if ($prereqComponents.Count -lt 1) { $problems += 'no components' }
+        $ids = @($prereqComponents | ForEach-Object { [string]$_.id })
+        if (($ids | Select-Object -Unique).Count -ne $ids.Count) { $problems += 'duplicate component ids' }
+        foreach ($component in $prereqComponents) {
+            $label = [string]$component.id
+            if ($label -notmatch '^[a-z0-9][a-z0-9-]*$') { $problems += "invalid id '$label'" }
+            $acquisition = $component.acquisition
+            if (-not $acquisition) { $problems += "$label has no acquisition"; continue }
+            $mode = [string]$acquisition.mode
+            if (@('official-download', 'local') -notcontains $mode) { $problems += "$label has unknown acquisition mode '$mode'" }
+            if ($mode -eq 'official-download') {
+                if (-not ([string]$acquisition.url).StartsWith('https://')) { $problems += "$label download URL is not https" }
+                if ([string]$acquisition.url -notmatch '^https://[^\s]+$') { $problems += "$label download URL has spaces" }
+                if ($component.consent.required -ne $true) { $problems += "$label downloads over the network without consent" }
+            }
+            if ([string]$acquisition.filename -match '[\\/:*?"<>|]') { $problems += "$label filename is not a bare file name" }
+            if (-not ($acquisition.size_bytes -is [long] -or $acquisition.size_bytes -is [int]) -or $acquisition.size_bytes -le 0) { $problems += "$label has no positive size_bytes" }
+            if ([string]$acquisition.sha256 -notmatch '^[0-9a-f]{64}$') { $problems += "$label sha256 is not 64 lowercase hex characters" }
+            if ($null -eq $component.signature -or $component.signature.required -isnot [bool]) { $problems += "$label does not declare signature.required as a boolean" }
+            elseif ($component.signature.required -eq $true -and [string]::IsNullOrWhiteSpace([string]$component.signature.expected_subject)) { $problems += "$label requires a signature but names no expected_subject" }
+            if ($null -eq $component.redistribution -or $component.redistribution.approved_for_bundling -isnot [bool]) { $problems += "$label does not declare redistribution.approved_for_bundling as a boolean" }
+        }
+        if ($problems.Count -eq 0) {
+            $prereqOk = $true
+            $prereqDetail = "$($prereqComponents.Count) pinned components in prerequisites.v1.json"
+        } else {
+            $prereqDetail = "prerequisites.v1.json failed: $($problems -join '; ')"
+        }
+
+        $dependencyDoc = Join-Path $repo 'docs\release\DEPENDENCY_MANIFEST.md'
+        if (-not (Test-Path -LiteralPath $dependencyDoc)) {
+            $prereqHashDetail = "missing audit record: $dependencyDoc"
+        } else {
+            $docText = (Get-Content -LiteralPath $dependencyDoc -Raw).ToLowerInvariant()
+            $missingHashes = @($prereqComponents | Where-Object { -not $docText.Contains(([string]$_.acquisition.sha256).ToLowerInvariant()) } | ForEach-Object { $_.id })
+            if ($missingHashes.Count -eq 0) {
+                $prereqHashesOk = $true
+                $prereqHashDetail = 'every pinned digest is recorded in docs\release\DEPENDENCY_MANIFEST.md'
+            } else {
+                $prereqHashDetail = "digests absent from DEPENDENCY_MANIFEST.md: $($missingHashes -join ', ')"
+            }
+        }
+    } catch {
+        $prereqDetail = "prerequisites.v1.json is not valid JSON: $($_.Exception.Message)"
+    }
+}
+Add-Gate 'release.prerequisites' $prereqOk $prereqDetail
+Add-Gate 'release.prerequisites-hashes' $prereqHashesOk $prereqHashDetail
 
 # --------------------------------------------------------------------------------- signing identity
 $now = Get-Date
@@ -220,6 +299,79 @@ if ($Stage -eq 'Release') {
         try {
             $e = Get-Content -LiteralPath $evidence -Raw | ConvertFrom-Json
             $artifactHash = if ($artifactExists) { (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant() } else { '' }
+
+            # The shape of the file is a contract (docs\evidence\SCHEMA.md). A missing key or a value of
+            # the wrong type is not a "maybe": it means the file was not produced by the documented
+            # pipeline, so every later gate would be reading something other than what it assumes.
+            $schemaProblems = @()
+            $evidenceKeys = @('release', 'artifact_sha256', 'date', 'tester', 'windows', 'sac', 'defender', 'installer', 'tests')
+            foreach ($key in $evidenceKeys) {
+                if ($null -eq $e.PSObject.Properties[$key]) { $schemaProblems += "missing '$key'" }
+            }
+            foreach ($property in $e.PSObject.Properties) {
+                if ($evidenceKeys -notcontains $property.Name) { $schemaProblems += "unexpected '$($property.Name)'" }
+            }
+            if ($null -ne $e.PSObject.Properties['_template'] -or $null -ne $e.PSObject.Properties['_not_a_result']) {
+                $schemaProblems += 'the file is a template, not an observation'
+            }
+            $nestedKeys = @{
+                windows   = @('edition', 'build', 'architecture', 'clean_install')
+                sac       = @('state', 'source')
+                defender  = @('realtime_protection', 'antivirus_enabled', 'signature_age_hours')
+                installer = @('signature_status', 'publisher', 'timestamped')
+            }
+            foreach ($section in $nestedKeys.Keys) {
+                $sectionValue = $e.$section
+                if ($null -eq $sectionValue -or $sectionValue -isnot [pscustomobject]) { continue }
+                foreach ($nestedKey in $nestedKeys[$section]) {
+                    if ($null -eq $sectionValue.PSObject.Properties[$nestedKey]) { $schemaProblems += "$section.$nestedKey is missing" }
+                }
+            }
+            if ([string]$e.release -notmatch '^\d+\.\d+\.\d+$') { $schemaProblems += "release is not a version: '$($e.release)'" }
+            if ([string]$e.artifact_sha256 -notmatch '^[0-9a-f]{64}$') { $schemaProblems += 'artifact_sha256 is not 64 lowercase hex characters' }
+            if ([string]::IsNullOrWhiteSpace([string]$e.tester)) { $schemaProblems += 'tester is empty' }
+            if ([string]$e.tester -match '^(?i)(tbd|todo|unknown|n/a|tester|placeholder|<.*>)$') { $schemaProblems += "tester is a placeholder: '$($e.tester)'" }
+            $dateParses = $false
+            try { [void][datetime]::Parse([string]$e.date, [System.Globalization.CultureInfo]::InvariantCulture); $dateParses = $true } catch { }
+            if (-not $dateParses) { $schemaProblems += "date does not parse: '$($e.date)'" }
+            if ($null -eq $e.windows -or $e.windows -isnot [pscustomobject]) { $schemaProblems += 'windows is not an object' }
+            else {
+                if ($null -ne $e.windows.build -and $e.windows.build -isnot [int] -and $e.windows.build -isnot [long]) { $schemaProblems += 'windows.build is not an integer or null' }
+                if ($null -ne $e.windows.clean_install -and $e.windows.clean_install -isnot [bool]) { $schemaProblems += 'windows.clean_install is not a boolean or null' }
+                if ($null -ne $e.windows.edition -and $e.windows.edition -isnot [string]) { $schemaProblems += 'windows.edition is not a string or null' }
+                if ($null -ne $e.windows.architecture -and $e.windows.architecture -isnot [string]) { $schemaProblems += 'windows.architecture is not a string or null' }
+            }
+            if ($null -eq $e.sac -or $e.sac -isnot [pscustomobject]) { $schemaProblems += 'sac is not an object' }
+            else {
+                if ($null -ne $e.sac.state -and $e.sac.state -isnot [int] -and $e.sac.state -isnot [long]) { $schemaProblems += 'sac.state is not an integer or null' }
+                if ($null -ne $e.sac.source -and $e.sac.source -isnot [string]) { $schemaProblems += 'sac.source is not a string or null' }
+            }
+            if ($null -eq $e.defender -or $e.defender -isnot [pscustomobject]) { $schemaProblems += 'defender is not an object' }
+            else {
+                foreach ($key in @('realtime_protection', 'antivirus_enabled')) {
+                    $value = $e.defender.$key
+                    if ($null -ne $value -and $value -isnot [bool]) { $schemaProblems += "defender.$key is not a boolean or null" }
+                }
+                if ($null -ne $e.defender.signature_age_hours -and $e.defender.signature_age_hours -isnot [int] -and $e.defender.signature_age_hours -isnot [long] -and $e.defender.signature_age_hours -isnot [double] -and $e.defender.signature_age_hours -isnot [decimal]) { $schemaProblems += 'defender.signature_age_hours is not a number or null' }
+            }
+            if ($null -eq $e.installer -or $e.installer -isnot [pscustomobject]) { $schemaProblems += 'installer is not an object' }
+            else {
+                if ($null -ne $e.installer.signature_status -and $e.installer.signature_status -isnot [string]) { $schemaProblems += 'installer.signature_status is not a string or null' }
+                if ($null -ne $e.installer.publisher -and $e.installer.publisher -isnot [string]) { $schemaProblems += 'installer.publisher is not a string or null' }
+                if ($null -ne $e.installer.timestamped -and $e.installer.timestamped -isnot [bool]) { $schemaProblems += 'installer.timestamped is not a boolean or null' }
+            }
+            $testKeys = @('installed', 'launched', 'backend_healthy', 'first_run_completed', 'uninstall_preserved_data')
+            if ($null -eq $e.tests -or $e.tests -isnot [pscustomobject]) { $schemaProblems += 'tests is not an object' }
+            else {
+                foreach ($key in $testKeys) {
+                    if ($e.tests.PSObject.Properties[$key] -eq $null) { $schemaProblems += "tests.$key is missing" }
+                    elseif ($e.tests.$key -isnot [bool]) { $schemaProblems += "tests.$key is not a boolean" }
+                }
+                foreach ($property in $e.tests.PSObject.Properties) {
+                    if ($testKeys -notcontains $property.Name) { $schemaProblems += "tests has unexpected '$($property.Name)'" }
+                }
+            }
+            Add-Gate 'evidence.schema' ($schemaProblems.Count -eq 0) $(if ($schemaProblems.Count -eq 0) { 'matches docs\evidence\SCHEMA.md' } else { $schemaProblems -join '; ' })
             Add-Gate 'clean.release' ($e.release -eq $ReleaseVersion) "evidence release: $($e.release)"
             Add-Gate 'clean.artifact-hash' ($e.artifact_sha256 -and $e.artifact_sha256.ToLowerInvariant() -eq $artifactHash) "evidence hash matches the artifact"
             Add-Gate 'clean.tester' ([bool]$e.tester) "tester: $($e.tester)"

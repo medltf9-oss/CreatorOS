@@ -4,6 +4,36 @@ All notable changes to CreatorOS are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Release-readiness work toward `1.0.0`. This is not a `1.0.0` release, and the source version is
+unchanged; see `docs/release/V1_RELEASE_BLOCKERS.md` for what still blocks publication.
+
+### Added
+
+- A first-run setup page and `/setup` API: a pinned `creatoros.prerequisites.v1` manifest, bounded
+  presence detection for Ollama and FFmpeg, on-request SHA-256, size, Authenticode, publisher and
+  timestamp verification of a downloaded prerequisite, and a recorded finish/skip decision. The
+  application never downloads or installs a prerequisite itself.
+- `scripts/generate_sbom.py`: deterministic CycloneDX 1.5 SBOM generation from real repository
+  inputs (desktop and backend versions, Node integrity digests, Python environment, FFmpeg hashes and
+  versions), with a `--check` validation mode.
+- ADR-37 and an updated `docs/INSTALLATION.md`, covering the setup flow, prerequisite verification,
+  the FFmpeg layout, the data root and uninstall behaviour.
+
+### Changed
+
+- `scripts/release-gate.ps1` validates the SBOM's format, spec version, component fields, duplicate
+  references and release version instead of accepting any parseable JSON, and adds
+  `release.prerequisites` / `release.prerequisites-hashes` gates that validate the pinned manifest
+  and cross-check every digest against the dependency audit record.
+
+### Fixed
+
+- The Smart App Control state recorded for the audit machine is corrected to off
+  (`VerifiedAndReputablePolicyState = 0`) in ADR-34, with a note that its install evidence was not
+  collected under SAC enforcement.
+
 ## [0.8.0] — 2026-11-24
 
 The first public, open-source release.

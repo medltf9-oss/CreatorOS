@@ -7,6 +7,11 @@ it is approved for redistribution in the v1.0.0 installer.
 This is an audit record, not a redistribution approval. A hash match proves the downloaded bytes are
 the bytes that were checked; it does not grant a licence.
 
+The machine-readable form of this record is
+`app/backend/src/creatoros/resources/prerequisites.v1.json` (schema `creatoros.prerequisites.v1`). The
+first-run wizard verifies files against it and `scripts/release-gate.ps1` validates it and requires
+every digest here to match. When a value in this document changes, change it there in the same commit.
+
 ## 1. Runtime dependencies
 
 ### Ollama
