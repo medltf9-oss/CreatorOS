@@ -20,6 +20,10 @@ unchanged; see `docs/release/V1_RELEASE_BLOCKERS.md` for what still blocks publi
   versions), with a `--check` validation mode.
 - ADR-37 and an updated `docs/INSTALLATION.md`, covering the setup flow, prerequisite verification,
   the FFmpeg layout, the data root and uninstall behaviour.
+- Release-governance records: `docs/release/OWNER_CERTIFICATE_ACTION.md` (the owner-only certificate
+  checklist, current Algeria-eligible options and prices), `docs/release/SIGNATURE_INVENTORY.md` (the
+  measured 64-file PE inventory and signing policy) and `docs/release/V1_RELEASE_GATE_MATRIX.md` (the
+  authoritative pass/blocked/not-run matrix).
 
 ### Changed
 

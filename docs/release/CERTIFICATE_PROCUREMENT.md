@@ -22,8 +22,8 @@ A **publicly trusted code-signing certificate** that:
   controls), after CA identity/organisation validation;
 - stores its private key in FIPS 140-2 Level 2, Common Criteria EAL 4+, or equivalent hardware,
   as required by the CA/Browser Forum since June 2023;
-- has a validity of no more than 459 days (the CA/Browser Forum limit in force since February
-  2026);
+- has a validity of no more than 460 days (CA/Browser Forum Code Signing Baseline Requirements
+  3.11.0, 2026-06-16, §6.3.2: certificates issued on or after 2026-03-01);
 - can produce an Authenticode SHA-256 signature accepted by Windows 10/11 x64.
 
 A self-signed certificate, an internally issued certificate, a test certificate, or a certificate
@@ -36,7 +36,25 @@ a legal person and cannot be validated unless an entity with that legal name exi
 
 ## 2. Options for an individual resident in Algeria
 
+### Not available: Microsoft Artifact Signing (Public Trust)
+
+Microsoft's hosted signing service (formerly Trusted Signing) is not a route for this publisher.
+Public Trust certificates are limited to organizations in the United States, Canada, the European
+Union, the United Kingdom, Australia, New Zealand, Japan, South Korea, Singapore, Switzerland,
+Norway and Israel; **individual developers must be located in the United States or Canada**. An
+individual resident in Algeria does not qualify, and neither a fictitious foreign entity nor another
+person's identity may be used to bypass that. A Private Trust profile does not issue a publicly
+trusted code-signing certificate.
+
+Verified 2026-11-25 at
+<https://learn.microsoft.com/en-us/azure/artifact-signing/quickstart> and
+<https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/code-signing-options>.
+
 ### Option A — SSL.com Individual Validation (IV), recommended when name-only identity matters
+
+*Verified 2026-11-25 against SSL.com's own pages: Algeria appears on the accepted-country list and
+not on the restricted list; the one-year IV certificate is US$129.00 and the YubiKey FIPS token is
+US$379.00.*
 
 SSL.com issues an IV code-signing certificate to an individual, with no registered business
 required. Its accepted country list includes Algeria (DZ); Algeria is not on its restricted
@@ -46,9 +64,10 @@ list.
 | --- | --- |
 | IV Code Signing, 1 year | **US$129.00** |
 | YubiKey FIPS USB token | **US$379.00** each, plus shipping |
-| Delivery | FIPS token; international shipping |
+| Delivery | FIPS token; international shipping; delivery to Algeria is quoted at checkout |
 | Validation | 3–5 business days standard, plus shipping |
-| Certificate lifetime | Maximum 459 days under current CA/B rules |
+| Certificate lifetime | Maximum 460 days for certificates issued on or after 2026-03-01 |
+| Country eligibility | Algeria (`DZ`) is on SSL.com's accepted-country list; it is not export-restricted |
 | Signing | Token in the Windows certificate store; existing signtool path works with the certificate thumbprint |
 | Alternative | SSL.com eSigner cloud signing, Tier 1 US$180/year (240 signings); requires CodeSignTool/CSC integration rather than the current script |
 
@@ -85,12 +104,12 @@ Apache-2.0, so it may qualify, but Certum decides.
 | Open Source Code Signing — card + reader set | **€69.00 gross** |
 | Open Source Code Signing — cloud (SimplySign) | **€49.00 gross** |
 | Open Source Code Signing — activation code only | **€25.00 gross** |
-| Shipping to Algeria | **US$39.00** on Certum's US store (approx. €36); customs/duty extra |
+| Shipping to Algeria | **€38.00 net** (Certum's official shipping table, outside-EU rate); customs/duty extra |
 | Validity | 1 year |
 | Certificate identity | Common Name includes "Open Source Developer"; Organization is "Open Source Developer" |
 | Validation | Individual identity, utility bill, and a public project URL showing the applicant's relationship to the project |
 
-**Approximate delivered cost:** €69 + ~€36 shipping + customs, about **€105–€120**.
+**Approximate delivered cost:** €69 + €38 shipping + any tax/customs, about **€107–€121**.
 
 Why consider it: it is a genuine publicly trusted code-signing certificate, explicitly aimed at
 open-source maintainers, at a fraction of the cost of a commercial IV certificate. Certum states
