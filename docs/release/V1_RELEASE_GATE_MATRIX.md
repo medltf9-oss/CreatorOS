@@ -2,20 +2,20 @@
 
 **Status date:** 2026-11-25
 **Release candidate:** none. Public release remains **v0.8.0** (source only).
-**Readiness commit:** `1eac7b3` on `release/v1.0.0-readiness` (PR #6, draft).
+**Readiness commit:** `6cee073` on `release/v1.0.0-readiness` (PR #6, draft).
 **Rule:** a mandatory gate passes only with evidence for the exact release commit and artifact.
 `FAIL`, `BLOCKED`, `NOT RUN` and `UNKNOWN` all block the release. This matrix is the authoritative
 summary; details live in the linked documents.
 
 | # | Gate | Status | Evidence | What closes it |
 | ---: | --- | --- | --- | --- |
-| 1 | Source integrity | **PASS (readiness commit)** | `release/v1.0.0-readiness` at `1eac7b3`; `git fsck --full` reports only dangling blobs (normal after commits); PR #6 head matches the pushed commit | Re-run on the final release commit; keep the tree clean |
-| 2 | CI on the exact commit | **PASS for `787af16`; rerun for `1eac7b3`** | GitHub Actions run on the pushed readiness commit; earlier run `45541888270` passed at `787af16` | Watch the run for `1eac7b3` to completion; require it before merge |
-| 3 | Backend/frontend tests | **PASS (local `1eac7b3` content)** | 1,617 passed, 9 skipped (`pytest -q`); desktop 208 passed (`pnpm test`) | Re-run on the final commit; CI repeats both |
+| 1 | Source integrity | **PASS (readiness commit)** | `release/v1.0.0-readiness` at `6cee073`; `git fsck --full` reports only dangling blobs (normal after commits); PR #6 head matches the pushed commit | Re-run on the final release commit; keep the tree clean |
+| 2 | CI on the exact commit | **PASS at `6cee073`** | GitHub Actions run `45635149518`: backend tests and desktop checks both succeeded. The first run at `1eac7b3` failed only because the pinned-FFmpeg byte test ran against a different CI FFmpeg build; the guard was fixed in `6cee073` | Require a fresh green run on the final release commit |
+| 3 | Backend/frontend tests | **PASS (local and CI at `6cee073`)** | 1,617 passed, 9 skipped (`pytest -q`, 215 s); desktop 208 passed (`pnpm test`); CI backend and desktop jobs both green | Re-run on the final commit |
 | 4 | Typecheck, build, lint | **PASS (local)** | `ruff check src tests` clean; `pnpm typecheck` clean; `pnpm build` succeeded | Re-run on the final commit |
 | 5 | CA-issued certificate | **BLOCKED** | No CA-issued certificate with a private key in either Windows store; `sign-release.ps1 -Check` reports `CSC_LINK : none` | Owner orders a certificate (`OWNER_CERTIFICATE_ACTION.md`) |
 | 6 | Private-key protection | **BLOCKED** | No token, HSM or signing service exists | Certificate issued to hardware or a CA signing service |
-| 7 | Signature inventory | **PASS (baseline)** | `docs/release/SIGNATURE_INVENTORY.md`: 64 PE files measured, 44 vendor-signed, 20 unsigned, sign policy defined | Regenerate on the signed release candidate and record the result |
+| 7 | Signature inventory | **PASS (baseline)** | `docs/release/SIGNATURE_INVENTORY.md`: 64 PE files measured, 44 vendor-signed, 20 unsigned, sign policy defined. The 20 include 4 development-only PyInstaller bootloaders that must not ship | Prune development packages from the payload, then regenerate on the signed release candidate |
 | 8 | Authenticode on every CreatorOS-owned PE | **NOT RUN** | No signed build exists | Sign `CreatorOS.exe`, installer and uninstaller; `signtool verify /pa /all` |
 | 9 | RFC 3161 timestamp | **BLOCKED** | Nothing to timestamp | `/tr` + `/td SHA256` after signing; verify the token |
 | 10 | Publisher identity matches owner approval | **BLOCKED** | Publisher name not yet chosen | Owner approves the exact subject (`OWNER_CERTIFICATE_ACTION.md` §2) |
