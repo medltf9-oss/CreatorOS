@@ -135,10 +135,16 @@ def test_verifying_a_file_that_is_not_the_pinned_build_reports_the_mismatch(no_r
 
 def test_verifying_the_real_ffmpeg_build_passes_byte_and_size_checks(no_runtime, client):
     from creatoros.core.settings import get_settings
+    from creatoros.services.setup.manifest import load_manifest
 
     binary = get_settings().ffmpeg_bin / "ffmpeg.exe"
     if not binary.is_file():
-        pytest.skip("this environment has no bundled FFmpeg build")
+        pytest.skip("this environment has no FFmpeg build on the expected path")
+    pinned = load_manifest().get("ffmpeg")
+    if pinned.size_bytes is not None and binary.stat().st_size != pinned.size_bytes:
+        # CI installs whatever gyan.dev currently publishes; only the pinned build can be
+        # asserted byte-for-byte, and asserting on a different build would be a false failure.
+        pytest.skip("the FFmpeg on the expected path is not the pinned build")
     response = client.post("/setup/prerequisites/ffmpeg/verify", json={"path": str(binary)})
     assert response.status_code == 200, response.text
     body = response.json()
