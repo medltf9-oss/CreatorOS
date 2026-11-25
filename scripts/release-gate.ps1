@@ -172,6 +172,8 @@ if ($Stage -ne 'Source') {
     if ($artifactExists) {
         $item = Get-Item -LiteralPath $artifactPath
         Add-Gate 'artifact.size' ($item.Length -gt 50MB) ("{0:N0} bytes" -f $item.Length)
+        $productVersion = $item.VersionInfo.ProductVersion
+        Add-Gate 'artifact.version' ($productVersion -eq $ReleaseVersion) "installer ProductVersion: $productVersion"
         $hash = (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
         $name = $item.Name
         $manifestPath = Join-Path $releaseDir 'SHA256SUMS.txt'
