@@ -104,11 +104,15 @@ turn it on **and** ensure signing runs afterwards - that is an ADR-34 decision t
 
 ### 4.1 What you need
 
-* a code-signing certificate: an **OV** certificate (exportable `.pfx`, cheapest, reputation earned over
-  time) or an **EV** certificate (hardware token or cloud HSM, immediate SmartScreen reputation, an
-  annual cost). Both work with SAC; EV is the shortest path to "no warnings on a stranger's machine".
+* a **CA-issued** code-signing certificate. Since June 2023 the CA/Browser Forum requires the private
+  key to live in FIPS 140-2 Level 2 / Common Criteria EAL 4+ hardware (a token, card or HSM); a
+  plain exportable `.pfx` is no longer how public CAs issue these certificates. Individual (IV), OV
+  and EV certificates can all sign an installer; EV is not required for NSIS and does not guarantee
+  instant SmartScreen reputation.
 * the Windows SDK signing tools (`signtool.exe`), which this machine already has at
   `C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\signtool.exe`.
+* the procurement options, current prices and the owner actions for Algeria are in
+  [`CERTIFICATE_PROCUREMENT.md`](CERTIFICATE_PROCUREMENT.md).
 
 ### 4.2 Where the secret lives
 
@@ -132,8 +136,18 @@ Rules the script enforces:
 ```powershell
 $env:CSC_LINK = 'C:\keys\creatoros-codesign.pfx'
 $env:CSC_KEY_PASSWORD = '<password>'
-powershell -ExecutionPolicy Bypass -File scripts\build-release.ps1
+powershell -ExecutionPolicy Bypass -File scripts\build-release.ps1 -RequireSignature
 ```
+
+With a hardware token in the Windows certificate store, use the thumbprint instead of exporting a
+PFX:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build-release.ps1 -RequireSignature -CertificateThumbprint '<SHA-1 thumbprint>'
+```
+
+`-RequireSignature` aborts before building when neither input is present, so a release cannot silently
+fall back to an unsigned installer.
 
 `build-release.ps1` now signs between packaging and the manifest, so:
 
@@ -152,6 +166,25 @@ powershell -ExecutionPolicy Bypass -File scripts\sign-release.ps1 -Sign
 powershell -ExecutionPolicy Bypass -File scripts\sign-release.ps1 -Verify     # exits 1 if anything is unsigned
 powershell -ExecutionPolicy Bypass -File scripts\sign-release.ps1 -Check      # report only, always exits 0
 ```
+
+A signature is necessary but not sufficient for release. The mandatory gate is enforced separately
+and fails closed:
+
+```powershell
+# before tagging: versions, docs, SBOM, tracked-secret scan, clean tree
+powershell -ExecutionPolicy Bypass -File scripts\release-gate.ps1 -Stage Source
+
+# after signing: digest, manifest, publisher, RFC 3161 timestamp, signtool chain
+powershell -ExecutionPolicy Bypass -File scripts\release-gate.ps1 -Stage Artifact -ExpectedPublisher "<validated publisher>"
+
+# before publishing: clean SAC-on evidence, tag, CI, branch protection, published asset digest
+powershell -ExecutionPolicy Bypass -File scripts\release-gate.ps1 -Stage Release -ExpectedPublisher "<validated publisher>"
+```
+
+The Release stage refuses to pass unless `docs/evidence/v1.0.0-clean-sac.json` records an installer
+run on a clean Windows 11 machine with Smart App Control enforced (`state = 1`), Defender real-time
+protection on, the same artifact SHA-256, a valid timestamp, a completed first run, and data preserved
+through uninstall. That file does not exist yet and must not be invented.
 
 `-Check` today:
 

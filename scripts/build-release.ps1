@@ -10,7 +10,8 @@
       2. backend bundle   signed interpreter + pure-Python payload -> installer_builds\backend
       3. renderer         vite build (typecheck first)
       4. installer        electron-builder -> releases\<version>\CreatorOS-Setup-<version>.exe
-      5. signing          only when CSC_LINK is set: sign-release.ps1 signs and verifies the artefacts
+      5. signing          when CSC_LINK or -CertificateThumbprint is supplied: sign-release.ps1 signs and
+                          verifies the artefacts; -RequireSignature makes an unsigned build fail
       6. manifest         SHA-256 + size of every artefact into releases\<version>\SHA256SUMS.txt
 
     It does not install. Installing is `installer_builds\verify-install.ps1` (or double-clicking the
@@ -26,12 +27,22 @@
 
 .PARAMETER SkipBackend
     Reuse an existing installer_builds\backend (useful when only the renderer changed).
+
+.PARAMETER CertificateThumbprint
+    SHA-1 thumbprint of a CA-issued code-signing certificate in the Windows certificate store.
+    Alternative to CSC_LINK; the private key stays in the token/HSM.
+
+.PARAMETER RequireSignature
+    Fail before building if neither CSC_LINK nor -CertificateThumbprint is supplied. Use this for a
+    release build; an unsigned build is only for local testing.
 #>
 [CmdletBinding()]
 param(
     [string]$Version = '',
     [switch]$SkipIcons,
-    [switch]$SkipBackend
+    [switch]$SkipBackend,
+    [string]$CertificateThumbprint = '',
+    [switch]$RequireSignature
 )
 
 $ErrorActionPreference = 'Stop'
@@ -53,6 +64,9 @@ if ($Version) {
     if ($Version -ne $desktopVersion) { throw "-Version $Version does not match app\desktop\package.json ($desktopVersion)" }
 }
 Write-Step "release $desktopVersion"
+if ($RequireSignature -and -not $env:CSC_LINK -and -not $CertificateThumbprint) {
+    throw '-RequireSignature was set, but no CSC_LINK or -CertificateThumbprint is available; refusing to build an unsigned release'
+}
 if ($backendVersion -ne $desktopVersion -or $settingsVersion -ne $desktopVersion) {
     throw "version mismatch: desktop=$desktopVersion backend/pyproject=$backendVersion backend/settings=$settingsVersion"
 }
@@ -114,13 +128,15 @@ Assert-Exists (Join-Path $releaseDir 'win-unpacked\resources\icon.ico') 'brand i
 # certificate, the signature is applied here - before the digests are taken - so SHA256SUMS.txt
 # describes the bytes that actually ship.
 $signatureLine = "# installer is unsigned (no code-signing certificate); see docs/CODE_SIGNING.md"
-if ($env:CSC_LINK) {
+if ($env:CSC_LINK -or $CertificateThumbprint) {
     Write-Step 'signing: sign-release.ps1'
-    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\sign-release.ps1') -Sign -Version $desktopVersion
+    $signArguments = @('-Sign', '-Version', $desktopVersion)
+    if ($CertificateThumbprint) { $signArguments += @('-Thumbprint', $CertificateThumbprint) }
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\sign-release.ps1') @signArguments
     if ($LASTEXITCODE -ne 0) { throw 'signing failed' }
-    $signatureLine = "# signed with the certificate in CSC_LINK; verified with signtool and Get-AuthenticodeSignature"
+    $signatureLine = "# signed and timestamped; verified with signtool and Get-AuthenticodeSignature"
 } else {
-    Write-Warning 'CSC_LINK is not set: the installer will be unsigned (docs\CODE_SIGNING.md)'
+    Write-Warning 'no certificate supplied: the installer will be unsigned (docs\CODE_SIGNING.md)'
 }
 
 # --- 6. manifest ----------------------------------------------------------------------------
