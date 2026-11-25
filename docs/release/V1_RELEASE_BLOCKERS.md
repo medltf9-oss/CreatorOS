@@ -159,9 +159,18 @@ result.
   publisher, clean SAC-on evidence, tag, CI, branch protection and the published asset digest.
 - `app/backend/src/creatoros/resources/prerequisites.v1.json` plus `services/setup/` and the
   `/setup` routes: manifest validation, bounded presence detection, hash/Authenticode verification and
-  recorded completion (24 backend tests).
-- The first-run wizard (`app/desktop/src/pages/Setup.tsx`) and its typed API client, with 8 desktop
-  tests; it reports presence, verification and "could not check" as different states.
+  recorded completion and persisted verification (42 setup backend tests).
+- The first-run wizard (`app/desktop/src/pages/Setup.tsx`) and its typed API client, with 15 new
+  desktop tests (223 total); it reports recorded verification, present-unverified, stale,
+  verification-failed, missing and "could not check" as different states, and requires an explicit
+  override when a required check fails.
+- **Wave 2:** the setup truth model (persisted fingerprint, `verified` only while current, bounded
+  verification, 409 completion gate, idempotent completion, upgrade notice), ADR-38, and the updated
+  INSTALLATION/UPGRADING contracts. Twelve acceptance scenarios are recorded as **not run** in
+  `docs/release/V1_ACCEPTANCE_MATRIX.md`.
+- **Wave 2 release evidence:** `--artifact` SBOM binding, `artifact.sbom` and
+  `artifact.manifest-scope` gates, an SBOM step in `build-release.ps1`, and the measured stale-0.8.0
+  negative test (installer and blockmap both rejected).
 - `docs/INSTALLATION.md` (updated for the first-run flow; it already satisfied the gate) and ADR-37,
   which records why the manifest ships in the package and why "unknown" never counts as a pass.
 - `scripts/generate_sbom.py`, `app/backend/tests/test_release_sbom.py` and `docs/release/SBOM.md`:
