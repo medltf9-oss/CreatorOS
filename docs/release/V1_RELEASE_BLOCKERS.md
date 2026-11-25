@@ -57,7 +57,29 @@ optional external prerequisite.
 **Owner action:** approve Ollama redistribution (including its bundled GPU runtime terms), decide the
 installer size/payload strategy, and fund the wizard work and its tests.
 
-### 2.3 Version and release artifacts
+### 2.3 GitHub's 2 GiB per-asset limit conflicts with a single fully offline installer
+
+GitHub documents a hard limit: each release asset must be under **2 GiB**. The current components
+already total more than that before NSIS overhead:
+
+| Component | Bytes |
+| --- | ---: |
+| CreatorOS 0.8.0 installer | 143,055,052 |
+| Ollama 0.40.18 installer | 1,953,587,080 |
+| FFmpeg + ffprobe 9.1 | 220,965,888 |
+| **Total** | **2,317,608,020** |
+
+That is about 2.16 GiB, roughly 170 MB over the limit. Compression may reduce it, but no compressed
+payload has been measured, and the installer would still be extremely large. A single
+`CreatorOS-Setup-1.0.0-x64.exe` containing all three is therefore **not demonstrated to be publishable
+as one GitHub release asset**, which is exactly what the brief asks for.
+
+**Owner action:** choose an explicit distribution design: a compressed offline payload under 2 GiB
+with measured evidence, a separate verified prerequisites bundle (not a single .exe), or external
+hosting with a signed manifest. Do not claim a single fully offline installer until its final byte
+size is measured.
+
+### 2.4 Version and release artifacts
 
 The source is still `0.8.0`. No `1.0.0` version bump, release notes, changelog entry, SBOM, signed
 build or tag exists. This is deliberate: releasing `1.0.0` without the gates above would be a
