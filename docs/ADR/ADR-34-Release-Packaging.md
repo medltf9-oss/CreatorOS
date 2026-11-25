@@ -70,7 +70,7 @@ the application can fix that. The two honest remedies are:
 
 Other consequences:
 
-* Backend bundle size is 79 MB rather than 39 MB. A traceback from the shipped backend names a real
+* Backend bundle size is about 62 MB rather than 39 MB (measured 64,623,559 bytes after the dev-package prune; the 0.8.0 payload shipped 98,640,439 bytes because it copied the developer virtualenv). A traceback from the shipped backend names a real
   file, and an operator can start it by hand (`resources\backend\python.exe -m creatoros serve`).
 * The shipped backend is the same Python version the test suite runs against, because the bundle is
   built from the venv's own base interpreter rather than a downloaded one.

@@ -81,8 +81,10 @@ installer size/payload strategy, and provide a clean machine for the wizard's ac
 
 ### 2.3 GitHub's 2 GiB per-asset limit conflicts with a single fully offline installer
 
-GitHub documents a hard limit: each release asset must be under **2 GiB**. The current components
-already total more than that before NSIS overhead:
+GitHub's official documentation (verified 2026-11-25) states: up to **1,000 assets per release**,
+**each file** must be under **2 GiB**, and there is **no limit on the total size** of a release. The
+limit is therefore per asset, not on the sum. What matters is whether any single installer would
+exceed 2 GiB, and the components already total more than that before NSIS overhead:
 
 | Component | Bytes |
 | --- | ---: |
@@ -91,17 +93,32 @@ already total more than that before NSIS overhead:
 | FFmpeg + ffprobe 9.1 | 220,965,888 |
 | **Total** | **2,317,608,020** |
 
-That is about 2.16 GiB, roughly 170 MB over the limit. Compression may reduce it, but no compressed
-payload has been measured, and the installer would still be extremely large. A single
-`CreatorOS-Setup-1.0.0-x64.exe` containing all three is therefore **not demonstrated to be publishable
-as one GitHub release asset**, which is exactly what the brief asks for.
+That is about 2.16 GiB, roughly 170 MB over the per-file limit. Compression may reduce it, but no
+compressed payload has been measured. A single `CreatorOS-Setup-1.0.0-x64.exe` containing all three
+is therefore **not demonstrated to be publishable as one GitHub release asset**. Publishing them as
+separate assets is within GitHub's limits (the Ollama installer alone is about 1.82 GiB), but it is
+only lawful if the redistribution rights in §2.1–§2.2 are cleared, and it is no longer a single-file
+install.
 
 **Owner action:** choose an explicit distribution design: a compressed offline payload under 2 GiB
-with measured evidence, a separate verified prerequisites bundle (not a single .exe), or external
-hosting with a signed manifest. Do not claim a single fully offline installer until its final byte
-size is measured.
+with measured evidence, separately approved prerequisite assets, or external hosting with a signed
+manifest. Do not claim a single fully offline installer until its final byte size is measured.
 
-### 2.4 Version and release artifacts
+### 2.4 The local 0.8.0 `SHA256SUMS.txt` is stale, and v0.8.0 publishes no binaries
+
+Measured on 2026-11-25: `releases\0.8.0\SHA256SUMS.txt` records
+`b9686c6e0eeab95c9d5cff0117f469b4242000baa27c56a9837e5ff1f896c4e0` for the installer, but the file on
+disk hashes to `ad8b7772b6f72ad5d1fc51c196b46308cb20acd2001f3a0ac420875d073a7a4b`. The installer's
+mtime is 2026-11-24 23:58:39 while the checksum file was written at 12:30:52: the artifact was rebuilt
+after the manifest, so the manifest describes bytes that no longer exist. `release-gate.ps1`
+`artifact.manifest` catches exactly this.
+
+The published GitHub release `v0.8.0` has **no binary assets** — it is a source release — so no
+public download is affected. The stale file is a local build leftover and must not be reused. Do not
+silently rewrite a published record: if a binary is ever attached to 0.8.0, publish a dated erratum
+with both hashes rather than replacing the file without comment.
+
+### 2.5 Version and release artifacts
 
 The source is still `0.8.0`. No `1.0.0` version bump, release notes for 1.0.0, SBOM artifact, signed
 build or tag exists. This is deliberate: releasing `1.0.0` without the gates above would be a

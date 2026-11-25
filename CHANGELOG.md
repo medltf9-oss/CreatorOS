@@ -31,6 +31,11 @@ unchanged; see `docs/release/V1_RELEASE_BLOCKERS.md` for what still blocks publi
   references and release version instead of accepting any parseable JSON, and adds
   `release.prerequisites` / `release.prerequisites-hashes` gates that validate the pinned manifest
   and cross-check every digest against the dependency audit record.
+- The shipped backend is no longer the developer virtualenv. `scripts/build-backend.ps1` prunes
+  pytest, coverage, PyInstaller (including its four unsigned bootloader executables), pygments,
+  packaging, ruff and the rest of the development toolchain, removes the setuptools `.pth` shim and
+  the `__pycache__` written during verification, and fails if a pruned module reappears. The measured
+  bundle fell from 98,640,439 bytes to 64,623,559 bytes; it still migrates and serves `/health/live`.
 
 ### Fixed
 

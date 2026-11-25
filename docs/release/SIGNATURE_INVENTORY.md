@@ -65,10 +65,19 @@ CreatorOS authored them, and can breach the vendor’s terms.
 
 The 0.8.0 `win-unpacked` payload includes `pytest`, `coverage`, `PyInstaller` hooks and bootloaders,
 and other development packages under `resources\backend\Lib\site-packages`. They inflate the
-installer (143,055,052 bytes) and add executable surface that is not part of the product. Before
-v1.0.0, the packaging step must install only runtime dependencies into the bundled interpreter and
-prove the result with `pytest`-free, `coverage`-free site-packages. Removing them also removes the
-four unsigned bootloader executables above.
+installer (143,055,052 bytes) and add executable surface that is not part of the product.
+
+**Corrected in `scripts\build-backend.ps1`.** The build now prunes an explicit development-only
+distribution list (pytest and its plugins, coverage, PyInstaller and its dependencies, pygments,
+packaging, iniconfig, ruff, respx, pip, setuptools, pluggy) after copying the virtualenv, removes
+`distutils-precedence.pth` so the interpreter does not print an import error at startup, fails the
+build if any of those modules leak back in, and deletes the `__pycache__` it creates during
+verification. Measured result: **64,623,559 bytes / 3,456 files / one executable (`python.exe`)**
+against 98,640,439 bytes / 5,689 files / five executables in 0.8.0. The four unsigned bootloaders
+are gone, and the bundle still migrates an empty root and serves `/health/live`.
+
+The next built payload therefore has 60 PE files, not 64 (the 4 bootloaders are removed); the
+signing policy in this document is unchanged.
 
 This is a packaging task, not a signing task: do not try to make the inventory acceptable by signing
 files that should not be present.
