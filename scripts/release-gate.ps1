@@ -283,6 +283,44 @@ if ($Stage -ne 'Source') {
         $manifestOk = $manifestText -match ('(?im)^' + [regex]::Escape($hash) + '\s+' + [regex]::Escape($name) + '\b')
         Add-Gate 'artifact.manifest' $manifestOk "SHA256SUMS.txt records $hash for $name"
 
+        # Every file the manifest names must exist next to it and carry the recorded digest. Checking
+        # only the installer would let a stale blockmap or an extra asset ship under a green gate.
+        $manifestProblems = @()
+        $manifestLines = [regex]::Matches($manifestText, '(?m)^([0-9a-fA-F]{64})[ \t]{2}([^\r\n]+?)(?:[ \t]{2}\([^)]*\))?[ \t]*\r?$')
+        foreach ($match in $manifestLines) {
+            $recorded = $match.Groups[1].Value.ToLowerInvariant()
+            $listedName = $match.Groups[2].Value.Trim()
+            $listedPath = Join-Path $releaseDir $listedName
+            if (-not (Test-Path -LiteralPath $listedPath -PathType Leaf)) {
+                $manifestProblems += "missing file: $listedName"
+                continue
+            }
+            $actual = (Get-FileHash -LiteralPath $listedPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -ne $recorded) { $manifestProblems += "hash mismatch: $listedName" }
+        }
+        if ($manifestLines.Count -eq 0) { $manifestProblems += 'no digest lines in SHA256SUMS.txt' }
+        Add-Gate 'artifact.manifest-scope' ($manifestProblems.Count -eq 0) $(if ($manifestProblems.Count -eq 0) { "$($manifestLines.Count) manifest entr$(if ($manifestLines.Count -eq 1) { 'y' } else { 'ies' }) verified" } else { $manifestProblems -join '; ' })
+
+        # The SBOM is release evidence only when it describes these exact bytes. A document that omits
+        # the installer hash is provenance for a build, not for the artifact being released.
+        $sbomBindOk = $false
+        $sbomBindDetail = 'no SBOM found to bind the installer hash'
+        if ($sbomPath -and (Test-Path -LiteralPath $sbomPath)) {
+            try {
+                $sbomDoc = Get-Content -LiteralPath $sbomPath -Raw | ConvertFrom-Json
+                $recordedHashes = @($sbomDoc.metadata.component.hashes | Where-Object { $_ -and [string]$_.alg -eq 'SHA-256' } | ForEach-Object { ([string]$_.content).ToLowerInvariant() })
+                $sbomBindOk = $recordedHashes -contains $hash
+                $sbomBindDetail = if ($sbomBindOk) {
+                    "SBOM metadata.component.hashes records installer SHA-256 $hash"
+                } else {
+                    "SBOM does not record installer SHA-256 $hash (recorded: $($recordedHashes -join ', '))"
+                }
+            } catch {
+                $sbomBindDetail = "SBOM cannot be read: $($_.Exception.Message)"
+            }
+        }
+        Add-Gate 'artifact.sbom' $sbomBindOk $sbomBindDetail
+
         $sig = Get-AuthenticodeSignature -LiteralPath $artifactPath
         Add-Gate 'artifact.signature' ($sig.Status -eq 'Valid') "Authenticode status: $($sig.Status)"
         Add-Gate 'artifact.timestamp' ($null -ne $sig.TimeStamperCertificate) $(if ($sig.TimeStamperCertificate) { "RFC 3161 timestamp: $($sig.TimeStamperCertificate.Subject)" } else { 'no timestamp certificate' })

@@ -38,8 +38,16 @@ app\backend\.venv\Scripts\python.exe scripts\generate_sbom.py `
   --output releases\1.0.0\sbom.cdx.json `
   --version 1.0.0 `
   --prerequisites app\backend\src\creatoros\resources\prerequisites.v1.json `
+  --artifact releases\1.0.0\CreatorOS-Setup-1.0.0.exe `
   --check
 ```
+
+`--artifact` binds the document to the bytes being released: it records the installer's SHA-256
+and size on `metadata.component.hashes` and `creatoros:artifact-*` properties. The Artifact gate
+(`artifact.sbom`) fails unless that hash equals the installer on disk, so an SBOM generated before
+the final build cannot be reused as provenance for it. `scripts\build-release.ps1` runs this step
+after it writes `SHA256SUMS.txt`, so the manifest, the SBOM and the installer all describe the same
+bytes.
 
 Naming a missing manifest is a required-input error (exit 2). The generator never downloads anything:
 it only reads local files and runs the FFmpeg binaries with `-version`.
@@ -99,12 +107,18 @@ It takes the first existing file and validates it before passing `release.sbom`:
 - `bomFormat` is `CycloneDX` and `specVersion` is `1.4`, `1.5` or `1.6`;
 - `metadata.component.version` equals the gate's `-ReleaseVersion` (an SBOM for another version
   cannot satisfy this release);
-- there is at least one component, and every component has a non-empty `name`, `version` and `type`;
+- `serialNumber` is a real `urn:uuid` (a zero or placeholder serial is rejected);
+- `metadata.timestamp` parses, is not in the future and is at most 30 days old;
+- there is at least one component with a SHA-256 hash, and every component has a non-empty `name`,
+  `version` and `type`;
 - no `bom-ref` appears twice.
 
-A parseable document that fails any of those closes the gate. The gate still does not verify hashes,
-licences or provenance; those are the generator's and the reviewer's job. `--check` remains part of
-the release procedure: run it, keep its exit code 0, and attach the same file the gate will read. Do
+At the **Artifact** stage the gate also requires `metadata.component.hashes` to contain the exact
+SHA-256 of the installer being released (`artifact.sbom`). That is what makes the document evidence
+for an artifact instead of provenance for a build: regenerating the SBOM is required whenever the
+installer changes. The gate still does not verify licences or the truth of supplier fields; those
+are the generator's and the reviewer's job. `--check` remains part of the release procedure: run it,
+keep its exit code 0, and attach the same file the gate will read. Do
 not hand-edit the document to satisfy the gate.
 
 Two further gates in the same stage validate the prerequisites manifest itself:

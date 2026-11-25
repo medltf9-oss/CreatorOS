@@ -1050,6 +1050,7 @@ def build_document(
     collection_errors: Iterable[str] = (),
     timestamp: str | None = None,
     serial: str | None = None,
+    artifact: tuple[str, str, int] | None = None,
 ) -> dict[str, Any]:
     """Build the CycloneDX 1.5 document; components are sorted by (type, name, version)."""
     ordered = sorted(
@@ -1072,6 +1073,13 @@ def build_document(
     if desktop_version is not None and desktop_version != product_version:
         product_properties.append(
             {'name': 'creatoros:desktop-package-version', 'value': desktop_version}
+        )
+    if artifact is not None:
+        artifact_name, artifact_hash, artifact_size = artifact
+        product_component['hashes'] = [{'alg': 'SHA-256', 'content': artifact_hash}]
+        product_properties.append({'name': 'creatoros:artifact-name', 'value': artifact_name})
+        product_properties.append(
+            {'name': 'creatoros:artifact-size-bytes', 'value': str(artifact_size)}
         )
     product_component['properties'] = _sorted_properties(product_properties)
     document: dict[str, Any] = {
@@ -1224,6 +1232,18 @@ def write_document(document: dict[str, Any], output: Path) -> None:
     output.write_text(text, encoding='utf-8', newline='\n')
 
 
+def _artifact_binding(path: Path) -> tuple[str, str, int]:
+    """Return (filename, lowercase SHA-256, size) for the artifact this SBOM describes."""
+    if not path.is_file():
+        raise SbomError(f'--artifact is not a file: {path}')
+    size = path.stat().st_size
+    digest = hashlib.sha256()
+    with path.open('rb') as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b''):
+            digest.update(chunk)
+    return path.name, digest.hexdigest(), size
+
+
 def generate_sbom(
     repo_root: Path,
     output: Path,
@@ -1232,6 +1252,7 @@ def generate_sbom(
     prerequisites: Path | None = None,
     timestamp: str | None = None,
     serial: str | None = None,
+    artifact: Path | None = None,
 ) -> dict[str, Any]:
     """Collect, build and write the SBOM; returns the document that was written."""
     repo_root = repo_root.resolve()
@@ -1243,6 +1264,7 @@ def generate_sbom(
     if not product_version:
         raise SbomError('--version must not be empty')
     components, errors = collect_components(repo_root, prerequisites)
+    binding = _artifact_binding(artifact) if artifact is not None else None
     document = build_document(
         components,
         product_version,
@@ -1251,6 +1273,7 @@ def generate_sbom(
         collection_errors=errors,
         timestamp=timestamp,
         serial=serial,
+        artifact=binding,
     )
     write_document(document, output)
     return document
@@ -1285,6 +1308,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         action='store_true',
         help='re-read the written document and exit 1 on structural problems',
     )
+    parser.add_argument(
+        '--artifact',
+        type=Path,
+        default=None,
+        help='installer file whose SHA-256 and size are recorded on metadata.component',
+    )
     parser.add_argument('--timestamp', default=None, help='ISO 8601 timestamp instead of now')
     parser.add_argument('--serial', default=None, help='UUID to use as the bom serial number')
     args = parser.parse_args(argv)
@@ -1296,6 +1325,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             prerequisites=args.prerequisites,
             timestamp=args.timestamp,
             serial=args.serial,
+            artifact=args.artifact,
         )
     except SbomError as exc:
         print(f'error: {exc}', file=sys.stderr)

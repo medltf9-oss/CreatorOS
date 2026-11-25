@@ -154,6 +154,19 @@ $lines += $signatureLine
 $lines += "# Smart App Control state on the build machine: $(try { (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy' -Name VerifiedAndReputablePolicyState -ErrorAction Stop).VerifiedAndReputablePolicyState } catch { 'unknown' }) (0=off, 1=on, 2=evaluation)"
 Set-Content -Path (Join-Path $releaseDir 'SHA256SUMS.txt') -Value $lines -Encoding ascii
 
+# --- 7. distribution SBOM --------------------------------------------------------------------
+# Generated after the digests so the document binds the installer hash that is actually shipping.
+# Without --artifact the SBOM is provenance for a build, not for the released bytes.
+Write-Step 'sbom: CycloneDX bound to the installer'
+$sbomPython = Join-Path $repo 'appackend.venvScriptspython.exe'
+if (-not (Test-Path -LiteralPath $sbomPython)) {
+    throw "the backend virtualenv is required to generate the SBOM: $sbomPython"
+}
+$sbomPath = Join-Path $releaseDir 'sbom.cdx.json'
+$prerequisites = Join-Path $repo 'appackendsrccreatorosesourcesprerequisites.v1.json'
+& $sbomPython (Join-Path $repo 'scriptsgenerate_sbom.py') --output $sbomPath --repo-root $repo --version $desktopVersion --prerequisites $prerequisites --artifact $setup --check
+if ($LASTEXITCODE -ne 0) { throw 'SBOM generation failed' }
+
 Write-Step 'done'
 Write-Host "Installer: $setup"
 Write-Host "Verify with: powershell -ExecutionPolicy Bypass -File scripts\verify-install.ps1"
