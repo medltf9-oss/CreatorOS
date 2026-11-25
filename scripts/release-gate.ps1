@@ -136,8 +136,31 @@ if ($sbomPath) {
         if (@('1.4', '1.5', '1.6') -notcontains [string]$sbom.specVersion) { $problems += "specVersion is '$($sbom.specVersion)'" }
         $sbomVersion = [string]$sbom.metadata.component.version
         if ($sbomVersion -ne $ReleaseVersion) { $problems += "metadata.component.version is '$sbomVersion', expected $ReleaseVersion" }
+        $serial = [string]$sbom.serialNumber
+        if ($serial -notmatch '^urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' -or
+            $serial -eq 'urn:uuid:00000000-0000-0000-0000-000000000000') {
+            $problems += "serialNumber is '$serial', expected a real urn:uuid"
+        }
+        $stamp = [datetime]::MinValue
+        $stampText = [string]$sbom.metadata.timestamp
+        $parsedStamp = [datetime]::TryParse(
+            $stampText,
+            [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::AssumeUniversal -bor [Globalization.DateTimeStyles]::AdjustToUniversal,
+            [ref]$stamp)
+        if (-not $parsedStamp) {
+            $problems += "metadata.timestamp is '$stampText'"
+        } else {
+            $ageDays = ((Get-Date).ToUniversalTime() - $stamp.ToUniversalTime()).TotalDays
+            if ($ageDays -gt 30) { $problems += "SBOM is $([math]::Round($ageDays)) days old; evidence must be fresh (<= 30)" }
+            if ($ageDays -lt -1) { $problems += 'SBOM timestamp is in the future' }
+        }
         $components = @($sbom.components | Where-Object { $_ })
         if ($components.Count -lt 1) { $problems += 'no components' }
+        $hashed = @($components | Where-Object {
+            $_.hashes -and @($_.hashes | Where-Object { [string]$_.alg -eq 'SHA-256' -and $_.content }).Count -gt 0
+        })
+        if ($hashed.Count -lt 1) { $problems += 'no component carries a SHA-256 hash' }
         $incomplete = @($components | Where-Object { -not $_.name -or -not $_.version -or -not $_.type })
         if ($incomplete.Count -gt 0) { $problems += "$($incomplete.Count) component(s) missing name, version or type" }
         $duplicateRefs = @($components | ForEach-Object { [string]$_.'bom-ref' } | Where-Object { $_ } | Group-Object | Where-Object { $_.Count -gt 1 })

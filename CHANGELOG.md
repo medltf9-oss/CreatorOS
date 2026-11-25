@@ -28,7 +28,8 @@ unchanged; see `docs/release/V1_RELEASE_BLOCKERS.md` for what still blocks publi
 ### Changed
 
 - `scripts/release-gate.ps1` validates the SBOM's format, spec version, component fields, duplicate
-  references and release version instead of accepting any parseable JSON, and adds
+  references, release version, serial-number shape, timestamp freshness (30 days) and the presence of
+  at least one SHA-256 component hash instead of accepting any parseable JSON, and adds
   `release.prerequisites` / `release.prerequisites-hashes` gates that validate the pinned manifest
   and cross-check every digest against the dependency audit record.
 - The shipped backend is no longer the developer virtualenv. `scripts/build-backend.ps1` prunes
