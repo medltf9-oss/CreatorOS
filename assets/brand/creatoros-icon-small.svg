@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  CreatorOS mark, small-size variant (16-32 px).
+
+  This is not a different brand; it is the same C-plus-play geometry redrawn for a rasteriser that has
+  16 pixels to work with. At that size the gradient, the glow, the 96-unit stroke and the tall squircle
+  radius all turn to mud: the ring thins to one anti-aliased pixel and the opening disappears.
+
+  What changes, and why:
+    * the tile radius drops from 220/1024 to 150/1024, so the silhouette survives at 16 px;
+    * no glow layer (invisible, and it lights the corners);
+    * the ring is a flat, slightly darker accent and is 128/1024 thick, so it renders as a solid stroke;
+    * the gradient is dropped entirely: two stops across 16 px are two muddy pixels;
+    * the play triangle is larger and moved to the optical centre.
+
+  scripts/make-icons.cjs renders sizes <= 32 from this file and the rest from creatoros-icon.svg.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-label="CreatorOS">
+  <rect x="0" y="0" width="1024" height="1024" rx="150" ry="150" fill="#12161f"/>
+  <circle
+    cx="512"
+    cy="512"
+    r="316"
+    fill="none"
+    stroke="#3fb3f0"
+    stroke-width="128"
+    stroke-linecap="butt"
+    stroke-dasharray="1678 307"
+    stroke-dashoffset="-154"
+  />
+  <path d="M 438 372 L 664 512 L 438 652 Z" fill="#e8f6fe"/>
+</svg>

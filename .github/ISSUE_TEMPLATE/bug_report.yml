@@ -1,0 +1,64 @@
+name: Bug report
+description: Report a reproducible problem in CreatorOS.
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include credentials, private media, account identifiers or personal data.
+        For a security vulnerability, use the Security tab instead of this form.
+  - type: input
+    id: version
+    attributes:
+      label: CreatorOS version
+      description: Shown in the rail footer or the release file name.
+      placeholder: "0.8.0"
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version and hardware
+      placeholder: "Windows 11 24H2, x64, 16 GB RAM"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open ...
+        2. Click ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or screenshots
+      description: Redact paths, tokens, account names and media. Drag images here.
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Confirmations
+      options:
+        - label: I am running the version stated above.
+          required: true
+        - label: I removed secrets and personal data from this report.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true

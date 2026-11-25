@@ -1,0 +1,49 @@
+{
+  "name": "creatoros-desktop",
+  "version": "0.8.0",
+  "private": true,
+  "description": "CreatorOS Studio desktop shell",
+  "license": "Apache-2.0",
+  "author": "CreatorOS contributors",
+  "main": "electron/main.cjs",
+  "type": "module",
+  "dependencies": {
+    "lucide-react": "^1.78.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "concurrently": "^10.0.7",
+    "electron": "^45.4.1",
+    "electron-builder": "26.18.0",
+    "tailwindcss": "^4.3.5",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8",
+    "wait-on": "^9.5.1"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "esbuild",
+      "electron-winstaller"
+    ]
+  },
+  "scripts": {
+    "dev": "concurrently -k -n vite,electron -c cyan,magenta \"vite\" \"wait-on tcp:127.0.0.1:5173 && node scripts/launch-electron.cjs\"",
+    "dev:vite": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/",
+    "charts:preview": "vite build --config vite.charts.config.ts",
+    "charts:shots": "vite build --config vite.charts.config.ts && node scripts/capture-charts.cjs",
+    "start": "node scripts/launch-electron.cjs",
+    "icons": "node scripts/electron-run.cjs scripts/make-icons.cjs",
+    "package": "vite build && electron-builder --config electron-builder.yml --win --x64",
+    "package:dir": "vite build && electron-builder --config electron-builder.yml --win --x64 --dir"
+  }
+}

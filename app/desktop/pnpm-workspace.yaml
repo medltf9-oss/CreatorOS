@@ -1,0 +1,8 @@
+packages:
+  - "."
+
+# pnpm 10+ reads this file. pnpm 9 still reads package.json#pnpm; both lists are kept in sync.
+allowBuilds:
+  electron: true
+  esbuild: true
+  electron-winstaller: true

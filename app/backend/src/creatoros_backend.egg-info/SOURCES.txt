@@ -1,0 +1,12 @@
+pyproject.toml
+src/creatoros/__init__.py
+src/creatoros/main.py
+src/creatoros/core/__init__.py
+src/creatoros/core/paths.py
+src/creatoros/core/settings.py
+src/creatoros_backend.egg-info/PKG-INFO
+src/creatoros_backend.egg-info/SOURCES.txt
+src/creatoros_backend.egg-info/dependency_links.txt
+src/creatoros_backend.egg-info/requires.txt
+src/creatoros_backend.egg-info/top_level.txt
+tests/test_paths.py

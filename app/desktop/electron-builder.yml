@@ -1,0 +1,87 @@
+# electron-builder configuration for CreatorOS.
+#
+# Build:
+#   powershell -ExecutionPolicy Bypass -File ..\..\scripts\build-release.ps1
+# or, having already run scripts/build-backend.ps1:
+#   npm run package
+#
+# Target: a per-user NSIS installer (no administrator prompt, installs under
+# %LOCALAPPDATA%\Programs\CreatorOS, Desktop + Start Menu shortcuts).
+appId: com.creatoros.studio
+productName: CreatorOS
+copyright: Copyright 2026 CreatorOS contributors
+
+directories:
+  output: ../../releases/${version}
+  buildResources: build
+
+# What goes into app.asar. The backend is NOT in here: it is an extraResource, because the shell has to
+# spawn an interpreter from an unpacked path, and a process cannot be spawned out of an asar archive.
+files:
+  - electron/**/*
+  - dist/**/*
+  - package.json
+  - '!**/*.map'
+  - '!**/*.test.cjs'
+  - '!dist-charts/**'
+  - '!scripts/**'
+
+extraResources:
+  # scripts/build-backend.ps1 places the interpreter bundle here.
+  - from: ../../installer_builds/backend
+    to: backend
+    filter:
+      - '**/*'
+      # Compiled bytecode from the build machine is not portable noise, but it is also not needed:
+      # the bundle ships .py sources, and shipping both doubles the file count.
+      - '!**/__pycache__/**'
+  # The brand icon travels with the app so the installer can point the shortcuts at it (build/installer.nsh)
+  # and so the window can set its own icon without reaching into the asar.
+  - from: build/icon.ico
+    to: icon.ico
+  # Apache-2.0 requires the licence and NOTICE to travel with a distributed build.
+  - from: ../../LICENSE
+    to: LICENSE
+  - from: ../../NOTICE
+    to: NOTICE
+  - from: ../../THIRD_PARTY_NOTICES.md
+    to: THIRD_PARTY_NOTICES.md
+
+asar: true
+asarUnpack: []
+# electron-builder otherwise writes the asar integrity hash into electron.exe, which invalidates the
+# vendor signature. Keeping the signature matters more than the integrity header here: the asar is
+# inside a per-user install directory, and an unsigned exe is blocked by Smart App Control outright.
+disableAsarIntegrity: true
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: build/icon.ico
+  # Do NOT rewrite electron.exe's resources. electron-builder would otherwise patch the version block
+  # and the icon into the executable, which invalidates the Authenticode signature Electron ships.
+  # Smart App Control on a clean Windows 11 machine blocks any unsigned executable, so keeping the
+  # vendor signature is what lets the installed app start. The icon the user sees comes from the
+  # shortcut (.lnk, set below) and from the window icon (electron/paths.cjs -> build/icon.ico).
+  signAndEditExecutable: false
+  # No code-signing certificate is available for this build; see docs/RELEASE_NOTES_0.8.0.md.
+  verifyUpdateCodeSignature: false
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: CreatorOS
+  uninstallDisplayName: CreatorOS
+  installerIcon: build/installerIcon.ico
+  uninstallerIcon: build/installerIcon.ico
+  installerHeaderIcon: build/installerIcon.ico
+  # The default is 45; a first install copies 80 MB, so give the launcher time on a slow disk.
+  deleteAppDataOnUninstall: false
+  runAfterFinish: true
+  artifactName: CreatorOS-Setup-${version}.${ext}
+  include: build/installer.nsh

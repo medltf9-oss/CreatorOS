@@ -1,0 +1,64 @@
+# dependencies
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+
+# local data, media, models, logs (never commit)
+# Anchored with a leading slash: `models/` used to also match the source package
+# `app/backend/src/creatoros/db/models/`, which silently kept the whole ORM layer out of git.
+/data/
+/models/
+/logs/
+/temp/
+/cache/
+/config/runtime/
+/config/secrets/
+/config/env_backup.json
+/installer_builds/
+/releases/
+*.db
+*.db-wal
+*.db-shm
+
+# build output
+dist/
+dist-charts/
+release/
+
+# env
+.env
+.env.local
+
+# code-signing material: a certificate must never be committed (docs/CODE_SIGNING.md)
+*.pfx
+*.p12
+*.pvk
+*.cer
+*.crt
+*.key
+*.snk
+
+# editor/os
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+
+# installed binaries / vendor payloads (reinstall via bootstrap, never commit)
+Programs/
+tools/
+installer_builds/
+*.exe
+*.dll
+*.zip
+
+# generated test artifacts
+.coverage
+coverage.xml
+htmlcov/
+.pytest_cache/
+
+# backend packaging scratch output (abandoned PyInstaller experiment; not used by any script)
+/app/backend/build/
+/.creatoros-root

@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  CreatorOS application mark.
+
+  The idea: a "C" (Creator) that is also the outer sweep of an aperture, with a play triangle in the
+  opening (the content that ships). Everything is geometry on a 1024 square so the same file renders
+  crisply at 16 px and at 1024 px, and so the ICO/PNG set is generated from one source rather than
+  drawn twice.
+
+  Palette (see docs/CREATOROS_BRAND.md):
+    tile        #0f1115 -> #1b2333   (the app's own window background)
+    accent      #38bdf8 -> #6366f1   (sky-400 -> indigo-500, the UI accent ramp)
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-label="CreatorOS">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b2333"/>
+      <stop offset="1" stop-color="#0f1115"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.34" r="0.62">
+      <stop offset="0" stop-color="#38bdf8" stop-opacity="0.20"/>
+      <stop offset="1" stop-color="#38bdf8" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="accent" x1="0.1" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#7dd3fc"/>
+      <stop offset="0.55" stop-color="#38bdf8"/>
+      <stop offset="1" stop-color="#6366f1"/>
+    </linearGradient>
+    <linearGradient id="play" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#e0f2fe"/>
+      <stop offset="1" stop-color="#a5b4fc"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Tile. The radius is 21.5% of the side, which is the Windows 11 squircle ratio. -->
+  <rect x="0" y="0" width="1024" height="1024" rx="220" ry="220" fill="url(#tile)"/>
+  <rect x="0" y="0" width="1024" height="1024" rx="220" ry="220" fill="url(#glow)"/>
+
+  <!--
+    The C. A single 300-degree arc, drawn as a stroked circle with a dash pattern so the opening is
+    exact: circumference 2*pi*330 = 2073.45; we draw 0.845 of it and leave the rest open on the right.
+  -->
+  <circle
+    cx="512"
+    cy="512"
+    r="330"
+    fill="none"
+    stroke="url(#accent)"
+    stroke-width="96"
+    stroke-linecap="round"
+    stroke-dasharray="1752 321.45"
+    stroke-dashoffset="-161.3"
+  />
+
+  <!-- The play triangle, optically centred inside the opening (not geometrically). -->
+  <path d="M 412 386 L 628 512 L 412 638 Z" fill="url(#play)"/>
+</svg>
