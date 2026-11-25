@@ -73,15 +73,24 @@ runtime. End users do not need Python or Node installed.
 
 ## Install a release
 
-Release artifacts are attached to the GitHub Releases page when a release is
-published; they are not stored in the source tree. If the Releases page has no
-0.8.0 build yet, use the source build below.
+There is **no binary attached to the 0.8.0 GitHub release**. The 0.8.0
+installer is unsigned, and its acceptance run did not cover a clean Windows 11
+machine with Smart App Control enabled. The project therefore publishes this
+release as source only; it does not ask you to run a binary whose behaviour on
+a default Windows 11 installation it cannot currently verify.
 
-1. Download `CreatorOS-Setup-0.8.0.exe` and `SHA256SUMS.txt` from the release.
-2. Verify the hash: `Get-FileHash .\CreatorOS-Setup-0.8.0.exe -Algorithm SHA256`.
+Build from source below. When a signed build is published, the release will
+contain `CreatorOS-Setup-<version>.exe` and `SHA256SUMS.txt`, and these steps
+will apply:
+
+1. Download `CreatorOS-Setup-<version>.exe` and `SHA256SUMS.txt` from the release.
+2. Verify the hash: `Get-FileHash .\CreatorOS-Setup-<version>.exe -Algorithm SHA256`.
 3. Run the installer. It installs per-user and creates Desktop and Start Menu
    shortcuts.
 4. Start Ollama, then launch CreatorOS.
+
+The tested 0.8.0 installer record is in
+[`docs/RELEASE_NOTES_0.8.0.md`](docs/RELEASE_NOTES_0.8.0.md).
 
 Upgrade and removal instructions: [`docs/INSTALLATION.md`](docs/INSTALLATION.md),
 [`docs/UPGRADING.md`](docs/UPGRADING.md) and
