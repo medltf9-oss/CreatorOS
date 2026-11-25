@@ -72,3 +72,36 @@ test('the wizard does not offer a download it cannot verify', () => {
   assert.doesNotMatch(API, /\/setup\/download/);
   assert.match(SETUP, /Official download page/);
 });
+
+test('the wizard shows a verification record and never trusts presence alone', () => {
+  assert.match(SETUP, /prerequisiteTruth\(component\)/);
+  assert.match(SETUP, /verificationEvidence\(record\)/);
+  assert.doesNotMatch(SETUP, /toneOf\(component\.state\)/);
+  assert.match(SETUP, /truth\.key === 'verified'/);
+  assert.match(SETUP, /verificationOutcome\(result\)/);
+  assert.match(SETUP, /outcome\.failing_ids/);
+});
+
+test('a failing required check requires a second, explicit override', () => {
+  assert.match(SETUP, /requiredChecksFailure\(err\)/);
+  assert.match(SETUP, /completeSetupBody\(skippedAi, override\)/);
+  assert.match(SETUP, /Complete anyway/);
+  assert.match(SETUP, /finish\(pendingOverride\.skipped_ai, true\)/);
+  assert.match(SETUP, /overrideWarning\(pendingOverride\.ids\)/);
+  assert.match(SETUP, /disabled=\{finishing !== null \|\| pendingOverride !== null\}/);
+});
+
+test('an upgrade is surfaced without reopening the wizard', () => {
+  assert.match(SETUP, /firstRunNotice\(data\.first_run\)/);
+  assert.match(SETUP, /upgradeNotice/);
+  assert.doesNotMatch(SETUP, /setPage\('setup'\)/);
+});
+
+test('the setup types carry the frozen verification and completion contract', () => {
+  assert.match(API, /export type SetupVerification = \{/);
+  assert.match(API, /verification: SetupVerification \| null;/);
+  assert.match(API, /version_changed: boolean;/);
+  assert.match(API, /export type CompleteRequest = \{/);
+  assert.match(API, /override_required_checks\?: boolean;/);
+  assert.match(API, /completeSetup\(body: CompleteRequest\)/);
+});

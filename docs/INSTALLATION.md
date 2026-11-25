@@ -86,18 +86,33 @@ machine had Smart App Control on; the audited value is `0` — off.)
 On a machine that has never completed setup, the app opens **First-run setup** (also in the rail under
 *Studio*). It reports what it observed, and it distinguishes three things that are easy to confuse:
 
-- **present** — the backend found a file or a running service;
-- **verified** — you asked it to hash a specific file against the pinned prerequisites manifest and
-  every check passed (size, SHA-256, Authenticode status, publisher, timestamp where required);
-- **not verified / could not check** — anything else. A signature that cannot be read is never shown
-  as a pass.
+- **present** — the backend found a file or a running service. A size match is stated as a size
+  match, not as integrity;
+- **verified (recorded)** — you asked it to hash a specific file against the pinned prerequisites
+  manifest and every check passed (size, SHA-256, Authenticode status, publisher, timestamp where
+  required). The app stores that result with the file's path, size and modified time; **Verified**
+  means the file is unchanged since that run, not that this screen re-hashed it. The panel shows the
+  recorded SHA-256, signer and time;
+- **present, not verified** — nothing has been hashed yet;
+- **unverified — file changed** — a record exists but the file's size or modified time no longer
+  matches, so the badge degrades until you run **Verify** again;
+- **could not check** — anything else. A signature that cannot be read is never shown as a pass.
 
 The page checks the data root (exists and writable), FFmpeg and ffprobe, the optional Ollama runtime,
 the integrity of the pinned manifest, and one row per prerequisite that is not approved for bundling.
+It also compares the installed Ollama version with the pinned one and says when they differ; the
+pinned version is a warning, not a hard gate.
 
 Finish with **Finish setup**, or **Skip AI setup** if you do not want a local model runtime. Either
-choice is recorded in the local database and the audit log. Finishing does not install, download or
-enable anything, and you can reopen the page at any time to re-run the checks.
+choice is recorded in the local database and the audit log. If a required check is failing (data
+root, FFmpeg, or the prerequisites manifest), the page refuses to complete and lists the failing ids;
+**Complete anyway** is a separate, explicit action whose override is recorded in the setup state and
+the audit log. Finishing does not install, download or enable anything, and you can reopen the page
+at any time to re-run the checks.
+
+The verification boundary is deliberate: a status refresh never hashes a 1.8 GiB installer. Only
+**Verify** reads every byte, and it refuses symlinks, reparse points, non-regular files and anything
+over 4 GiB; one verification runs at a time and stops after two minutes.
 
 ### The data root
 

@@ -271,10 +271,25 @@ export type SetupDisk = {
   error: string | null;
 };
 
+/** One recorded verification of a local file. The current flag is size and modified-time equality, not a re-hash. */
+export type SetupVerification = {
+  ok: boolean;
+  sha256: string;
+  size_bytes: number;
+  path: string;
+  signer_subject: string | null;
+  timestamped: boolean | null;
+  verified_at: string;
+  current: boolean;
+};
+
 export type SetupFirstRun = {
   completed: boolean;
   completed_at: string | null;
+  /** The version recorded at first completion; it never changes on upgrade. */
   version: string | null;
+  /** True when the recorded completed version differs from the running version. */
+  version_changed: boolean;
   skipped_ai: boolean;
 };
 
@@ -286,6 +301,8 @@ export type PrerequisiteState = {
   required: boolean;
   state: string;
   verified: boolean;
+  /** Recorded verification, or null when nothing has been verified for this file. */
+  verification: SetupVerification | null;
   detail: string;
   local_path: string | null;
   redistribution_approved: boolean;
@@ -328,7 +345,16 @@ export type VerifyResponse = {
   size_bytes: number | null;
   signer_subject: string | null;
   timestamped: boolean | null;
+  /** The recorded outcome of this run; a failed verify is recorded too. */
+  verification: SetupVerification | null;
   checks: VerifyCheck[];
+};
+
+export type CompleteRequest = {
+  skipped_ai?: boolean;
+  notes?: string | null;
+  /** Explicit user override for failing required checks; recorded in state and audit metadata. */
+  override_required_checks?: boolean;
 };
 
 export type CompleteResponse = {
@@ -526,7 +552,7 @@ export class CreatorApi {
     );
   }
 
-  completeSetup(body: { skipped_ai: boolean; notes?: string }) {
+  completeSetup(body: CompleteRequest) {
     return this.request<CompleteResponse>('/setup/complete', { method: 'POST', body: JSON.stringify(body) });
   }
 }

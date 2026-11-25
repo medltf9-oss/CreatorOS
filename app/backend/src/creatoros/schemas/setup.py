@@ -53,8 +53,29 @@ class SetupDisk(BaseModel):
 class SetupFirstRun(BaseModel):
     completed: bool = False
     completed_at: str | None = None
+    # The version the wizard was completed for, not the version currently running.
     version: str | None = None
     skipped_ai: bool = False
+    # True when the recorded completion version differs from the running app version. The recorded
+    # decision is kept: an upgrade must not discard it and must not reopen the wizard.
+    version_changed: bool = False
+
+
+class SetupVerification(BaseModel):
+    """What one recorded verification observed, plus whether that fingerprint still matches.
+
+    `current` compares the recorded size and modified time with the file now; it is not a live
+    re-hash, so `current` true means "unchanged since the recorded verification", not "verified now".
+    """
+
+    ok: bool
+    sha256: str
+    size_bytes: int
+    path: str
+    signer_subject: str | None = None
+    timestamped: bool | None = None
+    verified_at: str
+    current: bool
 
 
 class PrerequisiteState(BaseModel):
@@ -65,8 +86,9 @@ class PrerequisiteState(BaseModel):
     display_name: str
     version: str
     required: bool
-    state: str  # ok | missing | unverified | unknown
+    state: str  # ok | verified | missing | unverified | unknown
     verified: bool = False
+    verification: SetupVerification | None = None
     detail: str
     local_path: str | None = None
     redistribution_approved: bool = False
@@ -117,12 +139,14 @@ class VerifyResponse(BaseModel):
     size_bytes: int | None = None
     signer_subject: str | None = None
     timestamped: bool | None = None
+    verification: SetupVerification | None = None
     checks: list[VerifyCheck] = Field(default_factory=list)
 
 
 class CompleteRequest(BaseModel):
     skipped_ai: bool = False
     notes: str | None = Field(default=None, max_length=500)
+    override_required_checks: bool = False
 
 
 class CompleteResponse(BaseModel):

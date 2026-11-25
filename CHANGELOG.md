@@ -15,6 +15,11 @@ unchanged; see `docs/release/V1_RELEASE_BLOCKERS.md` for what still blocks publi
   presence detection for Ollama and FFmpeg, on-request SHA-256, size, Authenticode, publisher and
   timestamp verification of a downloaded prerequisite, and a recorded finish/skip decision. The
   application never downloads or installs a prerequisite itself.
+- The setup truth model: every verification attempt that finishes is persisted with its SHA-256,
+  size, modified time, path, signer and time, and `GET /setup/status` reports `verified` only when
+  that record passed and the file's size and modified time still match. A changed file downgrades to
+  `unverified` with the reason. The desktop shows *verified (recorded)*, *present, not verified*,
+  *unverified — file changed* and *verification failed* as different states.
 - `scripts/generate_sbom.py`: deterministic CycloneDX 1.5 SBOM generation from real repository
   inputs (desktop and backend versions, Node integrity digests, Python environment, FFmpeg hashes and
   versions), with a `--check` validation mode.
@@ -32,6 +37,21 @@ unchanged; see `docs/release/V1_RELEASE_BLOCKERS.md` for what still blocks publi
   at least one SHA-256 component hash instead of accepting any parseable JSON, and adds
   `release.prerequisites` / `release.prerequisites-hashes` gates that validate the pinned manifest
   and cross-check every digest against the dependency audit record.
+- `scripts/generate_sbom.py --artifact` binds the installer's SHA-256 and size into
+  `metadata.component`, and `scripts/build-release.ps1` generates that document after the checksums,
+  so the SBOM, `SHA256SUMS.txt` and the installer describe the same bytes. New gate rows
+  `artifact.sbom` (the SBOM must record the installer on disk) and `artifact.manifest-scope` (every
+  file named in the checksum manifest must exist and match) close the reuse of stale evidence.
+- Setup completion is transactional about its claims: `POST /setup/complete` returns 409
+  `REQUIRED_CHECKS_FAILING` when a required check fails and requires an explicit
+  `override_required_checks` decision, which is recorded in state and audit metadata. Completion is
+  idempotent (the first `completed_at` and `completed_version` survive), notes are kept unless
+  replaced, and an upgrade reports `version_changed` without reopening the wizard.
+- Verification is bounded: symlinks, reparse points and non-regular files are rejected, files over
+  4 GiB are refused, runs are serialised and a 120 s deadline returns 504 without writing a record.
+  FFmpeg presence states that a size match is not integrity; only `/verify` reads the bytes.
+- `docs/release/V1_ACCEPTANCE_MATRIX.md` records the twelve clean-machine scenarios and the evidence
+  each requires. It is explicitly **NOT RUN**: no signed release candidate exists.
 - A publisher subject is now compared relative-distinguished-name by relative-distinguished-name,
   so `CN=Ollama Inc. Support` no longer satisfies a pinned `CN=Ollama Inc.` (previously substring
   containment). Quoted commas are parsed correctly.

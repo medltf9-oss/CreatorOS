@@ -3,8 +3,8 @@
  *
  * The page observes the machine and asks the user to verify a downloaded file against the pinned
  * manifest. It never installs anything, never downloads on its own and never claims a component is
- * verified: the only `ok` it displays comes from a verification response or from the presence checks
- * the backend actually ran.
+ * verified from presence alone: a green state requires a current verification record, and a failed
+ * verification is shown with the checks that did not pass.
  */
 import { useState } from 'react';
 import {
@@ -23,7 +23,18 @@ import {
 import type { CreatorApi, PrerequisiteState, SetupCheck, VerifyResponse } from '../api';
 import { Badge, Button, Card, EmptyState, Field, Row, Spinner, formatBytes } from '../components/ui';
 import { useAsyncData } from './analytics/shared';
-import { toneOf, verificationSummary } from '../setupModel';
+import type { PrerequisiteTruthKey } from '../setupModel';
+import {
+  completeSetupBody,
+  firstRunNotice,
+  overrideWarning,
+  prerequisiteTruth,
+  requiredChecksFailure,
+  toneOf,
+  verificationEvidence,
+  verificationOutcome,
+  verificationSummary,
+} from '../setupModel';
 
 type Props = { api: CreatorApi; onDone: () => void };
 
@@ -32,6 +43,20 @@ function StateIcon({ state }: { state: string }) {
   if (state === 'fail' || state === 'missing') return <XCircle size={15} className="mt-0.5 shrink-0 text-rose-400" />;
   if (state === 'warn' || state === 'unverified') return <AlertTriangle size={15} className="mt-0.5 shrink-0 text-amber-400" />;
   return <CircleSlash size={15} className="mt-0.5 shrink-0 text-slate-500" />;
+}
+
+/** Only a current verification record earns the green check. Presence, staleness and failure do not. */
+function TruthIcon({ truth }: { truth: PrerequisiteTruthKey }) {
+  if (truth === 'verified') {
+    return <CheckCircle2 aria-hidden="true" size={15} className="mt-0.5 shrink-0 text-emerald-400" />;
+  }
+  if (truth === 'missing' || truth === 'verification_failed') {
+    return <XCircle aria-hidden="true" size={15} className="mt-0.5 shrink-0 text-rose-400" />;
+  }
+  if (truth === 'stale' || truth === 'unverified' || truth === 'present_unverified') {
+    return <AlertTriangle aria-hidden="true" size={15} className="mt-0.5 shrink-0 text-amber-400" />;
+  }
+  return <CircleSlash aria-hidden="true" size={15} className="mt-0.5 shrink-0 text-slate-500" />;
 }
 
 function CheckList({ checks }: { checks: SetupCheck[] }) {
@@ -57,9 +82,11 @@ function CheckList({ checks }: { checks: SetupCheck[] }) {
 function PrerequisiteCard({
   component,
   api,
+  onRecheck,
 }: {
   component: PrerequisiteState;
   api: CreatorApi;
+  onRecheck: () => void;
 }) {
   const [draft, setDraft] = useState('');
   const [verifying, setVerifying] = useState(false);
@@ -67,11 +94,18 @@ function PrerequisiteCard({
   const [error, setError] = useState<string | null>(null);
   const [linkNote, setLinkNote] = useState<string | null>(null);
 
+  const truth = prerequisiteTruth(component);
+  const record = component.verification ?? null;
+  const outcome = result ? verificationOutcome(result) : null;
+
   async function verify() {
     setVerifying(true);
     setError(null);
     try {
-      setResult(await api.verifyPrerequisite(component.id, draft.trim() || undefined));
+      const response = await api.verifyPrerequisite(component.id, draft.trim() || undefined);
+      setResult(response);
+      // The backend records the outcome, so re-read status to show the record this page will keep.
+      onRecheck();
     } catch (err) {
       setResult(null);
       setError(err instanceof Error ? err.message : String(err));
@@ -94,8 +128,8 @@ function PrerequisiteCard({
   return (
     <Card
       title={component.display_name}
-      subtitle={`Pinned version ${component.version} · ${component.kind === 'vendor-installer' ? 'vendor installer' : 'local tool'}`}
-      actions={<Badge tone={toneOf(component.state)}>{component.state}</Badge>}
+      subtitle={'Pinned version ' + component.version + ' · ' + (component.kind === 'vendor-installer' ? 'vendor installer' : 'local tool')}
+      actions={<Badge tone={truth.tone} title={truth.detail}>{truth.label}</Badge>}
     >
       <div className="space-y-1">
         <Row label="Where it lives" value={component.local_path ?? 'not found on this machine'} mono={false} />
@@ -115,6 +149,29 @@ function PrerequisiteCard({
       ) : null}
 
       <p className="mt-3 text-[12.5px] leading-relaxed text-slate-400">{component.detail}</p>
+
+      <div className="mt-3 rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+        <div className="flex items-start gap-3">
+          <TruthIcon truth={truth.key} />
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[12.5px] font-medium text-slate-200">{truth.label}</span>
+              <Badge tone={truth.tone}>{truth.key === 'verified' ? 'recorded verification' : 'not verified'}</Badge>
+            </div>
+            <p className="mt-1 text-[12px] leading-relaxed text-slate-400">{truth.detail}</p>
+            {record ? (
+              <dl className="mt-2 grid gap-x-6 gap-y-1 text-[11.5px] sm:grid-cols-2">
+                {verificationEvidence(record).map((item) => (
+                  <div key={item.label} className="flex min-w-0 items-baseline justify-between gap-3 border-b border-slate-800/60 py-1">
+                    <dt className="shrink-0 text-slate-500">{item.label}</dt>
+                    <dd className="min-w-0 break-all text-right font-mono text-slate-300">{item.value}</dd>
+                  </div>
+                ))}
+              </dl>
+            ) : null}
+          </div>
+        </div>
+      </div>
 
       {component.download_url ? (
         <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -137,7 +194,7 @@ function PrerequisiteCard({
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
               spellCheck={false}
-              placeholder="C:\\Users\\you\\Downloads\\installer.exe"
+              placeholder="C:\Users\you\Downloads\installer.exe"
               className="h-8 min-w-[260px] flex-1 rounded-[7px] border border-slate-700 bg-slate-950 px-2 font-mono text-[12px] text-slate-200 outline-none focus:border-sky-500"
             />
             <Button variant="primary" busy={verifying} onClick={() => void verify()}>
@@ -146,13 +203,19 @@ function PrerequisiteCard({
           </div>
         </Field>
 
-        {result ? (
+        {result && outcome ? (
           <div className="mt-3 rounded-lg border border-slate-800 bg-slate-950/40 p-3">
             <div className="flex flex-wrap items-center gap-2">
-              <Badge tone={result.ok ? 'good' : 'bad'}>{result.ok ? 'verified' : 'not verified'}</Badge>
+              <Badge tone={outcome.tone}>{outcome.label}</Badge>
               <span className="break-all font-mono text-[11px] text-slate-500">{result.path}</span>
             </div>
-            <p className="mt-1.5 text-[12px] text-slate-400">{verificationSummary(result)}</p>
+            <p className="mt-1.5 text-[12px] text-slate-400">{outcome.detail}</p>
+            <p className="mt-1 text-[11.5px] text-slate-500">{verificationSummary(result)}</p>
+            {outcome.failing_ids.length > 0 ? (
+              <p className="mt-1.5 text-[11.5px] text-rose-300">
+                Failing or uncheckable checks: <span className="font-mono">{outcome.failing_ids.join(', ')}</span>
+              </p>
+            ) : null}
             <ul className="mt-2 space-y-1.5">
               {result.checks.map((check) => (
                 <li key={check.id} className="flex items-start gap-2">
@@ -175,20 +238,30 @@ export default function Setup({ api, onDone }: Props) {
   const status = useAsyncData((signal) => api.setupStatus(signal), [api]);
   const [finishing, setFinishing] = useState<'finish' | 'skip' | null>(null);
   const [finishError, setFinishError] = useState<string | null>(null);
+  const [pendingOverride, setPendingOverride] = useState<{ ids: string[]; skipped_ai: boolean } | null>(null);
 
-  async function finish(skippedAi: boolean) {
+  async function finish(skippedAi: boolean, override = false) {
     setFinishing(skippedAi ? 'skip' : 'finish');
     setFinishError(null);
     try {
-      await api.completeSetup({ skipped_ai: skippedAi });
+      await api.completeSetup(completeSetupBody(skippedAi, override));
+      setPendingOverride(null);
       onDone();
     } catch (err) {
+      const required = requiredChecksFailure(err);
+      if (required) {
+        // A 409 is a decision point, not a failure to hide: name the checks and require an explicit override.
+        setPendingOverride({ ids: required.ids, skipped_ai: skippedAi });
+        setFinishing(null);
+        return;
+      }
       setFinishError(err instanceof Error ? err.message : String(err));
       setFinishing(null);
     }
   }
 
   const data = status.data;
+  const upgradeNotice = data ? firstRunNotice(data.first_run) : null;
 
   return (
     <div className="space-y-4">
@@ -221,6 +294,11 @@ export default function Setup({ api, onDone }: Props) {
                 {data.first_run.skipped_ai
                   ? 'You finished setup without AI. You can install a local runtime later from this page.'
                   : 'Setup is complete. Re-running the wizard only refreshes these checks.'}
+              </p>
+            ) : null}
+            {upgradeNotice ? (
+              <p className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-[12px] leading-relaxed text-amber-200/90">
+                {upgradeNotice}
               </p>
             ) : null}
           </div>
@@ -305,7 +383,7 @@ export default function Setup({ api, onDone }: Props) {
             ) : (
               <div className="space-y-4">
                 {data.prerequisites.map((component) => (
-                  <PrerequisiteCard key={component.id} component={component} api={api} />
+                  <PrerequisiteCard key={component.id} component={component} api={api} onRecheck={status.reload} />
                 ))}
               </div>
             )}
@@ -317,10 +395,20 @@ export default function Setup({ api, onDone }: Props) {
             actions={<Sparkles size={14} className="text-slate-500" />}
           >
             <div className="flex flex-wrap items-center gap-2">
-              <Button variant="primary" busy={finishing === 'finish'} disabled={finishing !== null} onClick={() => void finish(false)}>
+              <Button
+                variant="primary"
+                busy={finishing === 'finish'}
+                disabled={finishing !== null || pendingOverride !== null}
+                onClick={() => void finish(false)}
+              >
                 <Download size={13} /> Finish setup
               </Button>
-              <Button variant="default" busy={finishing === 'skip'} disabled={finishing !== null} onClick={() => void finish(true)}>
+              <Button
+                variant="default"
+                busy={finishing === 'skip'}
+                disabled={finishing !== null || pendingOverride !== null}
+                onClick={() => void finish(true)}
+              >
                 Skip AI setup
               </Button>
               <button type="button" className="text-[12px] text-slate-400 underline-offset-2 hover:underline" onClick={onDone}>
@@ -328,8 +416,41 @@ export default function Setup({ api, onDone }: Props) {
               </button>
             </div>
             {finishError ? <p className="mt-2 text-[12px] text-rose-400">{finishError}</p> : null}
+            {pendingOverride ? (
+              <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle aria-hidden="true" size={15} className="mt-0.5 shrink-0 text-amber-400" />
+                  <div className="min-w-0">
+                    <p className="text-[12.5px] font-medium text-amber-200">Completion needs an explicit override</p>
+                    <p className="mt-1 text-[12px] leading-relaxed text-amber-100/80">{overrideWarning(pendingOverride.ids)}</p>
+                    {pendingOverride.ids.length > 0 ? (
+                      <ul className="mt-2 flex flex-wrap gap-2">
+                        {pendingOverride.ids.map((id) => (
+                          <li key={id}>
+                            <Badge tone="bad">{id}</Badge>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <Button
+                        variant="danger"
+                        busy={finishing !== null}
+                        disabled={finishing !== null}
+                        onClick={() => void finish(pendingOverride.skipped_ai, true)}
+                      >
+                        <AlertTriangle size={13} /> Complete anyway
+                      </Button>
+                      <Button variant="ghost" disabled={finishing !== null} onClick={() => setPendingOverride(null)}>
+                        Keep working
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : null}
             <p className="mt-3 text-[11.5px] text-slate-500">
-              You can return here at any time; the check results are re-read from this machine, not remembered.
+              You can return here at any time. Presence is re-read from this machine on every visit; a verification is a recorded result and stays visible only while the file still matches its fingerprint.
             </p>
           </Card>
         </>

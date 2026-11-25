@@ -187,6 +187,30 @@ def test_cli_writes_and_checks_the_document(sbom, tmp_path):
     assert sbom.check_file(output) == []
 
 
+def test_artifact_binding_records_the_installer_hash(sbom, tmp_path):
+    artifact = tmp_path / 'CreatorOS-Setup-0.0.0.exe'
+    artifact.write_bytes(b'MZ' + b'\0' * 1024)
+    output = tmp_path / 'bound.cdx.json'
+    document = sbom.generate_sbom(
+        REPO_ROOT,
+        output,
+        timestamp='2026-01-01T00:00:00Z',
+        artifact=artifact,
+    )
+    product = document['metadata']['component']
+    recorded = [item['content'] for item in product['hashes']]
+    assert hashlib.sha256(artifact.read_bytes()).hexdigest() in recorded
+    properties = {item['name']: item['value'] for item in product['properties']}
+    assert properties['creatoros:artifact-name'] == artifact.name
+    assert properties['creatoros:artifact-size-bytes'] == str(artifact.stat().st_size)
+    assert sbom.check_file(output) == []
+
+
+def test_artifact_binding_rejects_a_missing_file(sbom, tmp_path):
+    with pytest.raises(sbom.SbomError, match='artifact is not a file'):
+        sbom.generate_sbom(REPO_ROOT, tmp_path / 'x.cdx.json', artifact=tmp_path / 'absent.exe')
+
+
 def test_a_missing_lockfile_is_a_hard_failure(sbom, tmp_path):
     repo = tmp_path / 'repo'
     (repo / 'app' / 'desktop').mkdir(parents=True)
