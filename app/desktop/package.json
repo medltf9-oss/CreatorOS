@@ -38,7 +38,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "node --test tests/",
+    "test": "node --test \"tests/*.test.*\"",
     "charts:preview": "vite build --config vite.charts.config.ts",
     "charts:shots": "vite build --config vite.charts.config.ts && node scripts/capture-charts.cjs",
     "start": "node scripts/launch-electron.cjs",
