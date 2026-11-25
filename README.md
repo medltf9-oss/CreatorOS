@@ -4,6 +4,7 @@
 analyzing social media content.**
 
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-2f7d6b)](LICENSE)
+[![CI](https://github.com/medltf9-oss/CreatorOS/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/medltf9-oss/CreatorOS/actions/workflows/ci.yml)
 [![Platform: Windows x64](https://img.shields.io/badge/platform-Windows%20x64-2b3f4a)](#requirements)
 [![Status: 0.8.0](https://img.shields.io/badge/status-0.8.0-2f7d6b)](CHANGELOG.md)
 
