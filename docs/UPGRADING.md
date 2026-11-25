@@ -14,8 +14,14 @@ The application and your data are separate. Upgrading replaces the application; 
 4. Start CreatorOS. The shell runs `migrate` before it starts the API and refuses to start if the
    migration fails. The result is in `<data root>\logs\backend\backend.log` (`migrate exited code=0`).
 
-Your accounts, tokens, media, campaigns, analytics history and recommendations are untouched. Tokens
-stay decryptable because the credential vault's master key lives in Electron's `userData`
+Your accounts, tokens, media, campaigns, analytics history and recommendations are untouched. The
+first-run decision is kept too: if setup was completed on an older version, the app does not reopen
+the wizard and does not reset anything. The setup page shows a non-blocking notice that the recorded
+completion belongs to the older version (`first_run.version_changed`), and any prerequisite you
+verified is still shown as a recorded verification only while the file's size and modified time
+still match its fingerprint.
+
+Tokens stay decryptable because the credential vault's master key lives in Electron's `userData`
 (`%APPDATA%\creatoros-desktop\Local State`), whose directory name is pinned in
 `electron/paths.cjs` — a product rename must not orphan it.
 

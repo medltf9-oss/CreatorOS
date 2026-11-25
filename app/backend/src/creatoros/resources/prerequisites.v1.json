@@ -1,0 +1,94 @@
+{
+  "schema": "creatoros.prerequisites.v1",
+  "updated": "2026-11-25",
+  "source": "docs/release/DEPENDENCY_MANIFEST.md",
+  "notes": [
+    "Every byte count, hash and signer subject here was copied from docs/release/DEPENDENCY_MANIFEST.md,",
+    "which records what was actually verified on the audit machine. Changing a value here without",
+    "re-verifying the payload would turn a verification into a claim."
+  ],
+  "components": [
+    {
+      "id": "ollama",
+      "kind": "vendor-installer",
+      "display_name": "Ollama local AI runtime",
+      "version": "0.40.18",
+      "required": false,
+      "acquisition": {
+        "mode": "official-download",
+        "url": "https://github.com/ollama/ollama/releases/download/v0.40.18/OllamaSetup.exe",
+        "filename": "OllamaSetup.exe",
+        "size_bytes": 1953587080,
+        "sha256": "ad2bb47aa969b21cf8dd81b2d9f9a6d5030270ed242ef55087118c37c510acc2",
+        "release_page": "https://github.com/ollama/ollama/releases/tag/v0.40.18",
+        "checksum_page": "https://github.com/ollama/ollama/releases/download/v0.40.18/sha256sum.txt",
+        "vendor": "Ollama Inc."
+      },
+      "signature": {
+        "required": true,
+        "expected_subject": "CN=Ollama Inc., O=Ollama Inc., L=Toronto, S=Ontario, C=CA",
+        "timestamp_required": true
+      },
+      "install": {
+        "technology": "Inno Setup",
+        "arguments": ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-"],
+        "silent": true,
+        "elevates": false
+      },
+      "consent": {
+        "required": true,
+        "network_required": true,
+        "summary": "Ollama is a separate product published by Ollama Inc. It is downloaded only from its official release page, after you agree, and only after the bytes match the pinned hash and the vendor signature."
+      },
+      "license": {
+        "name": "MIT for Ollama",
+        "detail": "The official installer also carries GPU runtime components under their own terms."
+      },
+      "redistribution": {
+        "approved_for_bundling": false,
+        "detail": "Not approved for v1.0.0 bundling. Acquire it from the official release instead of embedding it in the CreatorOS installer."
+      }
+    },
+    {
+      "id": "ffmpeg",
+      "kind": "local-tool",
+      "display_name": "FFmpeg and ffprobe",
+      "version": "9.1-essentials_build-www.gyan.dev",
+      "required": true,
+      "acquisition": {
+        "mode": "local",
+        "filename": "ffmpeg.exe",
+        "companion_filenames": ["ffprobe.exe"],
+        "relative_to": "tools/ffmpeg/bin",
+        "size_bytes": 110590976,
+        "sha256": "ed8f66cb877087a96f5bbb40a2944f0e764f2ad8870d5cb647360d912e62bc07",
+        "source": "https://www.gyan.dev/ffmpeg/builds/"
+      },
+      "signature": {
+        "required": false,
+        "expected_subject": null,
+        "timestamp_required": false
+      },
+      "install": {
+        "technology": "none",
+        "arguments": [],
+        "silent": true,
+        "elevates": false
+      },
+      "consent": {
+        "required": false,
+        "network_required": false,
+        "summary": "The media toolchain is expected on disk. It is not downloaded silently."
+      },
+      "license": {
+        "name": "GPLv3",
+        "spdx": "GPL-3.0-only",
+        "detail": "Built with --enable-gpl --enable-version3 --enable-libx264 and statically links libx264."
+      },
+      "redistribution": {
+        "approved_for_bundling": false,
+        "detail": "Blocked for bundling. GPLv3 needs corresponding source, build scripts and notices for this exact binary, which the repository does not yet have."
+      }
+    }
+  ]
+}

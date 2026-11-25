@@ -1,9 +1,10 @@
 # CreatorOS release signing.
 #
 # The only thing standing between this project and a distributable installer is a code-signing
-# certificate. Smart App Control is ON on the development machine, so a *newly built unsigned installer*
-# is refused at launch with CodeIntegrity 3077 - that is a Windows policy decision, and this script never
-# changes a Windows security setting to work around it.
+# certificate. Smart App Control was measured ON in an earlier session, where a newly built unsigned
+# installer was refused at launch with CodeIntegrity 3077. It is OFF on the current audit machine
+# (VerifiedAndReputablePolicyState = 0), so this machine cannot prove clean-machine acceptance. That is
+# a Windows policy decision, and this script never changes a Windows security setting to work around it.
 #
 #   powershell -ExecutionPolicy Bypass -File scripts\sign-release.ps1 -Check
 #       Report only: is there a certificate, is signtool present, is the timestamp server reachable,
@@ -38,7 +39,8 @@ param(
     [switch]$IncludeAppExe,
     [string]$Path = '',
     [string]$TimestampUrl = 'http://timestamp.digicert.com',
-    [string]$Version = ''
+    [string]$Version = '',
+    [string]$Thumbprint = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -204,8 +206,8 @@ if ($Verify) {
 if ($Sign) {
     $tool = Find-SignTool
     if (-not $tool) { throw 'signtool.exe was not found. Install the Windows SDK signing tools, or keep the unsigned installer and document it.' }
-    $link = $env:CSC_LINK
-    if (-not $link) { throw 'CSC_LINK is not set: there is no certificate to sign with. Use -Check to see the current state.' }
+    $link = if ($Thumbprint) { $Thumbprint } else { $env:CSC_LINK }
+    if (-not $link) { throw 'no certificate: set CSC_LINK or pass -Thumbprint. Use -Check to see the current state.' }
     if ($link -match '^[A-Za-z]:\\' -and (Test-Path $link)) {
         $resolved = (Resolve-Path $link).Path
         if ($resolved -like (Join-Path $repo '*')) {

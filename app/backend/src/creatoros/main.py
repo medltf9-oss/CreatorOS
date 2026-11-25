@@ -24,6 +24,7 @@ from .api.routes import analytics as analytics_routes
 from .api.routes import content, ops, platform, system
 from .api.routes import library as library_routes
 from .api.routes import publishing as publishing_routes
+from .api.routes import setup as setup_routes
 from .api.routes import social as social_routes
 from .core.logging import configure_logging
 from .core.paths import ensure_dir
@@ -614,6 +615,7 @@ app.include_router(system.public)
 app.include_router(library_routes.media_router)
 for module in (
     system,
+    setup_routes,
     content,
     platform,
     ops,

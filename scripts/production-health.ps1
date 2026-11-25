@@ -59,7 +59,7 @@ $dataRoot = if ($env:CREATOROS_ROOT) { $env:CREATOROS_ROOT } else { Join-Path $e
 $database = Join-Path $dataRoot 'data\database\creatoros.db'
 $backendLog = Join-Path $dataRoot 'logs\backend\backend.log'
 $setup = Join-Path $repo "releases\$Version\CreatorOS-Setup-$Version.exe"
-$repoVenvPython = Join-Path $repo 'appackend\.venv\Scripts\python.exe'
+$repoVenvPython = Join-Path $repo 'app\backend\.venv\Scripts\python.exe'
 
 $results = @()
 function Check($name, $ok, $detail) {

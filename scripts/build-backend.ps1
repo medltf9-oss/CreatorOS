@@ -4,7 +4,7 @@
 
 .DESCRIPTION
     The shipped backend is a *signed interpreter plus a pure-Python payload*, not a compiled
-    executable. Layout (about 110 MB):
+    executable. Layout (about 62 MB after the rules below pruned the developer environment):
 
         installer_builds\backend\
             python.exe, python3.dll, python312.dll     (Python Software Foundation, Authenticode-signed)
@@ -108,14 +108,60 @@ foreach ($item in $prune) {
 Write-Step 'installing backend dependencies into the bundle'
 $bundleSite = Join-Path $lib 'site-packages'
 New-Item -ItemType Directory -Path $bundleSite -Force | Out-Null
-# *.dist-info stays: it is how `importlib.metadata` reports versions, and a dependency query that
-# cannot answer is a support ticket.
+# *.dist-info stays for runtime packages: it is how `importlib.metadata` reports versions, and a
+# dependency query that cannot answer is a support ticket.
 Copy-Item (Join-Path $sitePackages '*') -Destination $bundleSite -Recurse -Force
 # Editable-install hooks point at this machine's source tree and must never ship.
 Get-ChildItem $bundleSite -Filter '__editable__*' -ErrorAction SilentlyContinue | Remove-Item -Force
 Remove-Item (Join-Path $bundleSite 'a1_coverage.pth') -ErrorAction SilentlyContinue
-Remove-Item (Join-Path $bundleSite 'pip') -Recurse -Force -ErrorAction SilentlyContinue
-Remove-Item (Join-Path $bundleSite 'setuptools') -Recurse -Force -ErrorAction SilentlyContinue
+
+# The virtualenv is a developer environment. Copying it wholesale ships pytest, coverage, ruff and
+# PyInstaller (including the four unsigned bootloader .exe files) into the product unless they are
+# removed explicitly. This list is the evidence-backed minimum: none of these modules is imported by
+# creatoros at runtime, and the smoke test below fails loudly if removing one broke the bundle.
+$devDistributions = @{
+    'pytest'                    = @('pytest', '_pytest')
+    'pytest-asyncio'            = @('pytest_asyncio')
+    'pytest-cov'                = @('pytest_cov')
+    'coverage'                  = @('coverage')
+    'pyinstaller'               = @('PyInstaller', 'pyinstaller')
+    'pyinstaller-hooks-contrib' = @('pyinstaller_hooks_contrib')
+    'altgraph'                  = @('altgraph')
+    'pywin32-ctypes'            = @('pywin32_ctypes')
+    'pefile'                    = @('pefile', 'peutils')
+    'ordlookup'                 = @('ordlookup')
+    'pygments'                  = @('pygments')
+    'packaging'                 = @('packaging')
+    'iniconfig'                 = @('iniconfig')
+    'ruff'                      = @('ruff', '_ruff')
+    'respx'                     = @('respx')
+    'pluggy'                    = @('pluggy')
+    'pip'                       = @('pip')
+    'setuptools'                = @('setuptools', 'pkg_resources', '_distutils_hack')
+}
+$removed = 0
+foreach ($dist in $devDistributions.Keys) {
+    foreach ($module in $devDistributions[$dist]) {
+        $target = Join-Path $bundleSite $module
+        if (Test-Path $target) { Remove-Item $target -Recurse -Force; $removed++ }
+    }
+    Get-ChildItem $bundleSite -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match "^$([regex]::Escape($dist))-[0-9].*$" } |
+        ForEach-Object { Remove-Item $_.FullName -Recurse -Force; $removed++ }
+}
+# setuptools leaves a .pth shim behind that the interpreter executes on every start. Removing the
+# package without this file prints a ModuleNotFoundError before any output and breaks JSON consumers.
+Remove-Item (Join-Path $bundleSite 'distutils-precedence.pth') -ErrorAction SilentlyContinue
+
+# A silent reintroduction is worse than a larger bundle: refuse to build one.
+foreach ($dist in $devDistributions.Keys) {
+    foreach ($module in $devDistributions[$dist]) {
+        if (Test-Path (Join-Path $bundleSite $module)) {
+            throw "development package '$module' leaked into the bundle"
+        }
+    }
+}
+Write-Host "    pruned $removed development-only entries"
 
 Write-Step 'copying the creatoros package'
 Copy-Item (Join-Path $backend 'src\creatoros') -Destination $bundleSite -Recurse -Force
@@ -188,5 +234,14 @@ if (-not $SkipVerify) {
     }
 }
 
+# Running the bundle during verification writes __pycache__ into the very tree that ships. Remove
+# it so two builds of the same inputs produce the same bytes, and so the payload carries no compiled
+# leftovers from this machine.
+Get-ChildItem $OutputRoot -Recurse -Directory -Filter '__pycache__' -ErrorAction SilentlyContinue |
+    Remove-Item -Recurse -Force
+Get-ChildItem $OutputRoot -Recurse -File -Filter '*.pyc' -ErrorAction SilentlyContinue | Remove-Item -Force
+
+$finalSize = [math]::Round(((Get-ChildItem $OutputRoot -Recurse -File | Measure-Object Length -Sum).Sum / 1MB), 1)
 Write-Step 'done'
+Write-Host "Final bundle: $finalSize MB"
 Write-Host "The installer build expects: $OutputRoot\python.exe"

@@ -240,6 +240,129 @@ function describeFailure(body: Record<string, unknown>, status: number): string 
   return `request failed with HTTP ${status}`;
 }
 
+export type SetupCheck = { id: string; state: string; detail: string };
+
+export type SetupModelFact = { name: string; size_bytes: number | null; modified_at: string | null };
+
+export type SetupOllama = {
+  installed: boolean;
+  install_path: string | null;
+  version: string | null;
+  endpoint: string;
+  reachable: boolean;
+  models: SetupModelFact[];
+  error: string | null;
+};
+
+export type SetupFfmpeg = {
+  present: boolean;
+  ffprobe_present: boolean;
+  path: string | null;
+  version: string | null;
+  error: string | null;
+};
+
+export type SetupDisk = {
+  root: string;
+  exists: boolean;
+  writable: boolean;
+  free_bytes: number;
+  total_bytes: number;
+  error: string | null;
+};
+
+/** One recorded verification of a local file. The current flag is size and modified-time equality, not a re-hash. */
+export type SetupVerification = {
+  ok: boolean;
+  sha256: string;
+  size_bytes: number;
+  path: string;
+  signer_subject: string | null;
+  timestamped: boolean | null;
+  verified_at: string;
+  current: boolean;
+};
+
+export type SetupFirstRun = {
+  completed: boolean;
+  completed_at: string | null;
+  /** The version recorded at first completion; it never changes on upgrade. */
+  version: string | null;
+  /** True when the recorded completed version differs from the running version. */
+  version_changed: boolean;
+  skipped_ai: boolean;
+};
+
+export type PrerequisiteState = {
+  id: string;
+  kind: string;
+  display_name: string;
+  version: string;
+  required: boolean;
+  state: string;
+  verified: boolean;
+  /** Recorded verification, or null when nothing has been verified for this file. */
+  verification: SetupVerification | null;
+  detail: string;
+  local_path: string | null;
+  redistribution_approved: boolean;
+  redistribution_detail: string;
+  download_url: string | null;
+  release_page: string | null;
+  consent_required: boolean;
+};
+
+export type SetupStatus = {
+  version: string;
+  data_root: string;
+  setup_complete: boolean;
+  first_run: SetupFirstRun;
+  system: Record<string, unknown>;
+  disk: SetupDisk;
+  ollama: SetupOllama;
+  ffmpeg: SetupFfmpeg;
+  prerequisites: PrerequisiteState[];
+  checks: SetupCheck[];
+  manifest_updated: string | null;
+  manifest_error: string | null;
+};
+
+export type PrerequisiteCatalog = {
+  manifest_schema: string;
+  updated: string;
+  source: string;
+  components: PrerequisiteState[];
+  manifest_error: string | null;
+};
+
+export type VerifyCheck = { id: string; state: string; detail: string };
+
+export type VerifyResponse = {
+  component_id: string;
+  path: string;
+  ok: boolean;
+  sha256: string | null;
+  size_bytes: number | null;
+  signer_subject: string | null;
+  timestamped: boolean | null;
+  /** The recorded outcome of this run; a failed verify is recorded too. */
+  verification: SetupVerification | null;
+  checks: VerifyCheck[];
+};
+
+export type CompleteRequest = {
+  skipped_ai?: boolean;
+  notes?: string | null;
+  /** Explicit user override for failing required checks; recorded in state and audit metadata. */
+  override_required_checks?: boolean;
+};
+
+export type CompleteResponse = {
+  setup_complete: boolean;
+  first_run: SetupFirstRun;
+  already_completed: boolean;
+};
+
 export class CreatorApi {
   constructor(
     private readonly baseUrl: string,
@@ -413,5 +536,23 @@ export class CreatorApi {
     };
     void run();
     return () => controller.abort();
+  }
+  setupStatus(signal?: AbortSignal) {
+    return this.request<SetupStatus>('/setup/status', { signal });
+  }
+
+  prerequisites(signal?: AbortSignal) {
+    return this.request<PrerequisiteCatalog>('/setup/prerequisites', { signal });
+  }
+
+  verifyPrerequisite(componentId: string, path?: string) {
+    return this.request<VerifyResponse>(
+      `/setup/prerequisites/${encodeURIComponent(componentId)}/verify`,
+      { method: 'POST', body: JSON.stringify(path ? { path } : {}) },
+    );
+  }
+
+  completeSetup(body: CompleteRequest) {
+    return this.request<CompleteResponse>('/setup/complete', { method: 'POST', body: JSON.stringify(body) });
   }
 }

@@ -40,6 +40,8 @@ Status values: **Accepted** (in force) · **Proposed** (needs your sign-off) · 
 | ADR-34 | Release packaging ships copies of signed binaries: the shell exe is a byte-identical copy of the vendor `electron.exe`, the backend is the PSF-signed interpreter plus a pure-Python payload, and the installer is per-user NSIS | Accepted, **implemented + verified** (17/17 install/uninstall checks; unsigned installer blocked by Smart App Control — documented with two remedies) |
 | ADR-35 | Live provider verification is a staged, opt-in, twelve-step procedure whose publication step needs a typed phrase and which never approves anything | Accepted, **implemented + exercised** (20 tests through the real routes; first live run: 5 blocked, 4 skipped, 1 ok, exit 1) |
 | ADR-36 | Production health is measured on the installed app, launched from the shortcut, with the page sweep failing on the app's own error surface and on unexpected data drift | Accepted, **implemented + exercised** (35/35 checks, 45/45 with upgrade and uninstall, re-measured 2026-11-25; sweep self-check proves it can fail) |
+| ADR-37 | First-run setup ships a pinned prerequisite manifest, observes but never installs, and treats "unknown" as not a pass | Accepted, **implemented + tested** (setup API and wizard, manifest gate) |
+| ADR-38 | A finished verification is recorded; `verified` requires a passing record that still matches the file; completion refuses failing required checks unless the override is explicit and audited | Accepted, **implemented + tested** (42 setup backend tests, 223 desktop tests) |
 
 ---
 
@@ -59,7 +61,8 @@ is itself unsigned, so signing it replaces nothing.
 
 ## Phase 10 — activation, verification, production health
 
-Files: `ADR-35-Live-Verification-Protocol.md`, `ADR-36-Production-Health-Measurement.md`. The signing
+Files: `ADR-35-Live-Verification-Protocol.md`, `ADR-36-Production-Health-Measurement.md`,
+`ADR-37-First-Run-Setup-And-Pinned-Prerequisites.md`, `ADR-38-Setup-Verification-Truth-Model.md`. The signing
 path, its limits and the Smart App Control behaviour are recorded in `docs/CODE_SIGNING.md` rather than
 as a separate ADR, because the decision (sign when a certificate exists, never change a Windows
 security setting) is a refinement of ADR-34.

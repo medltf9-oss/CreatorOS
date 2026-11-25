@@ -5,7 +5,7 @@ import {
   FolderKanban, GitCompareArrows, HardDrive, Hash, History, KeyRound, LayoutDashboard, LayoutGrid,
   LibraryBig, LineChart, Link2, ListChecks, LoaderCircle, LockKeyhole, MessageSquare, Moon, Network,
   PenLine, Play, ScrollText, Send, Settings as SettingsIcon, ShieldCheck, Sliders, SlidersHorizontal, Sparkles,
-  Sun, TrendingUp, Truck, Upload, UserRound, UsersRound, Workflow,
+  Sun, TrendingUp, Truck, Upload, UserRound, UsersRound, Workflow, Wrench,
   type LucideIcon,
 } from 'lucide-react';
 import { CreatorApi } from './api';
@@ -44,6 +44,7 @@ import PublishingOverview from './pages/publishing/PublishingOverview';
 import ScheduleCenter from './pages/publishing/ScheduleCenter';
 import { WorkforceApi } from './apiWorkforce';
 import Dashboard from './pages/Dashboard';
+import Setup from './pages/Setup';
 import Infrastructure from './pages/Infrastructure';
 import ImportManager from './pages/library/ImportManager';
 import LibraryOverview from './pages/library/LibraryOverview';
@@ -114,6 +115,7 @@ declare global {
 
 const NAV = [
   { id: 'overview', label: 'Overview', section: 'Studio' },
+  { id: 'setup', label: 'First-run setup', section: 'Studio' },
   { id: 'ai', label: 'AI infrastructure', section: 'Studio' },
   { id: 'lab', label: 'Model Lab', section: 'Studio' },
   { id: 'playground', label: 'Playground', section: 'Studio' },
@@ -168,6 +170,7 @@ type PageId = (typeof NAV)[number]['id'];
 
 const NAV_ICONS: Record<PageId, LucideIcon> = {
   overview: LayoutDashboard,
+  setup: Wrench,
   ai: Cpu,
   lab: FlaskConical,
   playground: Play,
@@ -262,18 +265,23 @@ export default function App() {
         setPublishing(new PublishingApi(b.apiBase, b.token));
         setAnalytics(new AnalyticsApi(b.apiBase, b.token));
         const auth = { Authorization: `Bearer ${b.token}` };
-        const [diagRes, versionRes] = await Promise.all([
+        const [diagRes, versionRes, setupRes] = await Promise.all([
           fetch(`${b.apiBase}/diagnostics`, { headers: auth }),
           fetch(`${b.apiBase}/version`, { headers: auth }),
+          fetch(`${b.apiBase}/setup/status`, { headers: auth }).catch(() => null),
         ]);
         if (!diagRes.ok) throw new Error(`Diagnostics request failed: HTTP ${diagRes.status}`);
-        const [diagData, versionData] = (await Promise.all([
+        const [diagData, versionData, setupData] = (await Promise.all([
           diagRes.json(),
           versionRes.ok ? versionRes.json() : null,
-        ])) as [Diagnostics, VersionInfo | null];
+          setupRes && setupRes.ok ? setupRes.json() : null,
+        ])) as [Diagnostics, VersionInfo | null, { setup_complete?: boolean } | null];
         if (!cancelled) {
           setDiag(diagData);
           setVersion(versionData);
+          // A machine that has never finished the wizard lands on it; "Not now" leaves the user on
+          // the overview and the page stays one click away in the rail.
+          if (setupData?.setup_complete === false) setPage('setup');
         }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err));
@@ -412,6 +420,8 @@ export default function App() {
               onNavigate={(target) => setPage(target as PageId)}
             />
           )}
+
+          {api && page === 'setup' && <Setup api={api} onDone={() => setPage('overview')} />}
 
           {lib && page === 'lib-overview' && (
             <LibraryOverview

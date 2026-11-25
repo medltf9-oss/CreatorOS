@@ -1,0 +1,9 @@
+{
+  "_template": "Template only - not a result. Copy this file, replace every null with true or false as observed on the clean machine, and pass the copy to scripts\\build-sac-evidence.ps1 -InstallResults. The assembler refuses any value that is not a JSON boolean, so this file is intentionally unusable as evidence.",
+  "_not_a_result": true,
+  "installed": null,
+  "launched": null,
+  "backend_healthy": null,
+  "first_run_completed": null,
+  "uninstall_preserved_data": null
+}

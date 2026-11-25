@@ -3,6 +3,12 @@
 **Status:** Accepted, **implemented and verified on this machine** (installer build, install, launch,
 analytics pages from the live database, uninstall with data preserved — 17/17 checks).
 
+> **Correction (2026-11-25):** the Smart App Control value cited in Context item 2 is wrong for the
+> audit machine, which reports `VerifiedAndReputablePolicyState = 0` (off, Windows build 26300). The
+> packaging decision stands — it is the conservative reading either way — but the install and launch
+> evidence above was **not** collected with Smart App Control enforced, and no clean SAC-on evidence
+> exists yet. See `docs/release/V1_RELEASE_BLOCKERS.md` §1.
+
 ## Context
 
 Three facts about this machine and this product collided:
@@ -64,7 +70,7 @@ the application can fix that. The two honest remedies are:
 
 Other consequences:
 
-* Backend bundle size is 79 MB rather than 39 MB. A traceback from the shipped backend names a real
+* Backend bundle size is about 62 MB rather than 39 MB (measured 64,623,559 bytes after the dev-package prune; the 0.8.0 payload shipped 98,640,439 bytes because it copied the developer virtualenv). A traceback from the shipped backend names a real
   file, and an operator can start it by hand (`resources\backend\python.exe -m creatoros serve`).
 * The shipped backend is the same Python version the test suite runs against, because the bundle is
   built from the venv's own base interpreter rather than a downloaded one.

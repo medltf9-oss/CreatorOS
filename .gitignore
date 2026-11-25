@@ -24,7 +24,7 @@ __pycache__/
 # build output
 dist/
 dist-charts/
-release/
+/release/
 
 # env
 .env
