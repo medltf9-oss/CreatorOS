@@ -114,7 +114,7 @@ $privateKeyHits = Get-TrackedTextMatch 'BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE K
 $tokenHits = Get-TrackedTextMatch 'ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{60,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}'
 $passwordHits = Get-TrackedTextMatch 'CSC_KEY_PASSWORD\s*=\s*["''](?!(<|…|\.\.\.))[^"'']{8,}["'']'
 $secretHits = @($privateKeyHits + $tokenHits + $passwordHits | Select-Object -Unique)
-Add-Gate 'security.tracked-secrets' ($secretHits.Count -eq 0) $(if ($secretHits.Count -eq 0) { 'no private keys, tokens or literal signing passwords in tracked text files' } else { 'review: ' + ($secretHits -join ', ') })
+Add-Gate 'security.tracked-secrets' ($secretHits.Count -eq 0) $(if ($secretHits.Count -eq 0) { 'no private keys, tokens or literal signing passwords in tracked source/config files (docs and test fixtures excluded)' } else { 'review: ' + ($secretHits -join ', ') })
 
 # --------------------------------------------------------------------------------- SBOM and manifests
 $releaseDir = Join-Path $repo "releases\$ReleaseVersion"
