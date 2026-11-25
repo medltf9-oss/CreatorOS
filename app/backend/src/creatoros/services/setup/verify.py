@@ -126,19 +126,49 @@ def read_authenticode_signature(path: Path | str) -> SignatureInfo:
     )
 
 
+def _subject_parts(subject: str) -> list[str]:
+    """Split a distinguished name on commas that are outside quoted values."""
+    parts: list[str] = []
+    current: list[str] = []
+    quoted = False
+    escaped = False
+    for char in subject:
+        if escaped:
+            current.append(char)
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            current.append(char)
+            continue
+        if char == '"':
+            quoted = not quoted
+            current.append(char)
+            continue
+        if char == "," and not quoted:
+            parts.append("".join(current))
+            current = []
+            continue
+        current.append(char)
+    parts.append("".join(current))
+    return ["".join(part.split()).lower() for part in parts if part.strip()]
+
+
 def subject_matches(expected: str, actual: str | None) -> bool:
     """Compare a manifest subject with what Windows printed.
 
     The order of relative distinguished names is not part of the identity, so every component of the
-    expected subject must appear in the actual one; a missing or extra component is a mismatch.
+    expected subject must equal one component of the actual subject. A component that merely starts
+    with the expected value ("CN=Ollama Inc. Support" for "CN=Ollama Inc.") is a different publisher
+    and must not pass.
     """
     if not actual:
         return False
-    actual_normalized = actual.replace(" ", "").lower()
-    parts = [part.strip() for part in expected.split(",") if part.strip()]
-    if not parts:
+    expected_parts = _subject_parts(expected)
+    if not expected_parts:
         return False
-    return all(part.replace(" ", "").lower() in actual_normalized for part in parts)
+    actual_parts = set(_subject_parts(actual))
+    return all(part in actual_parts for part in expected_parts)
 
 
 def find_candidate(component: Component, directories: list[Path]) -> Path | None:

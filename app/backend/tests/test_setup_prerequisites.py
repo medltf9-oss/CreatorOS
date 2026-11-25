@@ -191,6 +191,15 @@ def test_subject_matching_ignores_rdn_order_but_not_a_missing_component():
     assert not subject_matches(expected, None)
 
 
+def test_subject_matching_rejects_a_publisher_whose_name_only_starts_the_same():
+    # Containment used to accept this: "CN=Ollama Inc." is a substring of "CN=Ollama Inc. Support".
+    expected = "CN=Ollama Inc., O=Ollama Inc."
+    assert not subject_matches(expected, "CN=Ollama Inc. Support, O=Ollama Inc.")
+    assert not subject_matches(expected, "CN=Ollama Inc., O=Evil, L=Toronto")
+    assert subject_matches(expected, 'CN="Ollama, Inc.", O=Ollama Inc.') is False
+    assert subject_matches('CN="Ollama, Inc."', 'CN="Ollama, Inc.", O=Ollama Inc.') is True
+
+
 def test_find_candidate_only_returns_a_real_file(tmp_path: Path):
     component = _component()
     assert find_candidate(component, [tmp_path]) is None

@@ -32,6 +32,11 @@ unchanged; see `docs/release/V1_RELEASE_BLOCKERS.md` for what still blocks publi
   at least one SHA-256 component hash instead of accepting any parseable JSON, and adds
   `release.prerequisites` / `release.prerequisites-hashes` gates that validate the pinned manifest
   and cross-check every digest against the dependency audit record.
+- A publisher subject is now compared relative-distinguished-name by relative-distinguished-name,
+  so `CN=Ollama Inc. Support` no longer satisfies a pinned `CN=Ollama Inc.` (previously substring
+  containment). Quoted commas are parsed correctly.
+- `scripts/production-health.ps1` no longer contains a literal backspace byte in the repository
+  virtualenv path, which made every post-uninstall check abort at assignment time.
 - The shipped backend is no longer the developer virtualenv. `scripts/build-backend.ps1` prunes
   pytest, coverage, PyInstaller (including its four unsigned bootloader executables), pygments,
   packaging, ruff and the rest of the development toolchain, removes the setuptools `.pth` shim and

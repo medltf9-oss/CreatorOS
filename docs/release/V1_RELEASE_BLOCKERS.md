@@ -118,7 +118,24 @@ public download is affected. The stale file is a local build leftover and must n
 silently rewrite a published record: if a binary is ever attached to 0.8.0, publish a dated erratum
 with both hashes rather than replacing the file without comment.
 
-### 2.5 Version and release artifacts
+### 2.5 First-run setup defects found by independent QA
+
+An adversarial pass over the setup code (read-only) found behaviours the tests do not cover. One is
+fixed here; the rest are recorded so they are not mistaken for release-ready.
+
+| Defect | Severity | Evidence | Status |
+| --- | --- | --- | --- |
+| Publisher check used substring containment: `CN=Ollama Inc. Support, O=Evil` matched `CN=Ollama Inc., O=Ollama Inc.` | High | `services\setup\verify.py:129` | **Fixed**: RDN-exact comparison with quoted-comma parsing; regression test added |
+| `verified` is hard-coded `False` in status and verification results are not persisted, so "present but unchecked" is the only reachable state even after a successful verify | High | `api\routes\setup.py:116`, `state.py` | Open: needs persisted verification records (hash + size + mtime) and a status state of `verified` only when they still match |
+| FFmpeg presence compares size only; an equal-size file with different bytes reports `ok` | High | `api\routes\setup.py:82-90` | Open: presence must not imply integrity; require verify for the hash |
+| Setup can be completed while a required check is `fail` (e.g. `media.ffmpeg`) and the wizard never reopens | Medium | `api\routes\setup.py:333-348`, `App.tsx:284` | Open: product decision — block completion or record an explicit override |
+| Completion overwrites `completed_at`, drops `notes` when omitted, and stores but never compares `version` | Medium | `state.py:37-46` | Open: make completion idempotent and define upgrade behaviour |
+| Any Ollama version (or a reachable remote endpoint) reports `ok`; pinned `0.40.18` is never compared | Medium | `api\routes\setup.py:69-73`, `detection.py:123-140` | Open |
+| `ffprobe` is never verified and `companion_filenames` is dead config | Medium | `prerequisites.v1.json:61`, `verify.py:186-200` | Open |
+| Verify accepts any absolute path, with no timeout, cancellation or concurrency limit | Medium | `api\routes\setup.py:290-305` | Open: hash of a 1.8 GiB file blocks a request |
+| `production-health.ps1` contained a literal 0x08 byte in the venv path, so post-uninstall checks aborted | High | `scripts\production-health.ps1:62` | **Fixed**: path restored, script parses |
+
+### 2.6 Version and release artifacts
 
 The source is still `0.8.0`. No `1.0.0` version bump, release notes for 1.0.0, SBOM artifact, signed
 build or tag exists. This is deliberate: releasing `1.0.0` without the gates above would be a
