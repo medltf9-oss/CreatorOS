@@ -120,14 +120,14 @@ Remove-Item (Join-Path $bundleSite 'a1_coverage.pth') -ErrorAction SilentlyConti
 # removed explicitly. This list is the evidence-backed minimum: none of these modules is imported by
 # creatoros at runtime, and the smoke test below fails loudly if removing one broke the bundle.
 $devDistributions = @{
-    'pytest'                    = @('pytest', '_pytest')
+    'pytest'                    = @('pytest', '_pytest', 'py')
     'pytest-asyncio'            = @('pytest_asyncio')
     'pytest-cov'                = @('pytest_cov')
     'coverage'                  = @('coverage')
     'pyinstaller'               = @('PyInstaller', 'pyinstaller')
-    'pyinstaller-hooks-contrib' = @('pyinstaller_hooks_contrib')
+    'pyinstaller-hooks-contrib' = @('pyinstaller_hooks_contrib', '_pyinstaller_hooks_contrib')
     'altgraph'                  = @('altgraph')
-    'pywin32-ctypes'            = @('pywin32_ctypes')
+    'pywin32-ctypes'            = @('pywin32_ctypes', 'win32ctypes')
     'pefile'                    = @('pefile', 'peutils')
     'ordlookup'                 = @('ordlookup')
     'pygments'                  = @('pygments')
@@ -142,11 +142,20 @@ $devDistributions = @{
 $removed = 0
 foreach ($dist in $devDistributions.Keys) {
     foreach ($module in $devDistributions[$dist]) {
-        $target = Join-Path $bundleSite $module
-        if (Test-Path $target) { Remove-Item $target -Recurse -Force; $removed++ }
+        # Some packages install a single top-level module file (pefile.py, peutils.py) next to
+        # the directories; checking only the bare name left those files in the 1.0.0 bundle.
+        foreach ($candidate in @($module, "$module.py")) {
+            $target = Join-Path $bundleSite $candidate
+            if (Test-Path $target) { Remove-Item $target -Recurse -Force; $removed++ }
+        }
     }
+    # dist-info directories use the PEP 503 normalised name (pytest_asyncio-1.5.0.dist-info),
+    # while this table uses the project name (pytest-asyncio). Matching only hyphens left four
+    # metadata directories in the 1.0.0 bundle, and every inventory then reported those
+    # development packages as installed. Accept either separator.
+    $distPattern = '^' + ($dist -replace '-', '[-_]') + '-[0-9]'
     Get-ChildItem $bundleSite -Directory -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -match "^$([regex]::Escape($dist))-[0-9].*$" } |
+        Where-Object { $_.Name -match $distPattern } |
         ForEach-Object { Remove-Item $_.FullName -Recurse -Force; $removed++ }
 }
 # setuptools leaves a .pth shim behind that the interpreter executes on every start. Removing the
@@ -156,9 +165,18 @@ Remove-Item (Join-Path $bundleSite 'distutils-precedence.pth') -ErrorAction Sile
 # A silent reintroduction is worse than a larger bundle: refuse to build one.
 foreach ($dist in $devDistributions.Keys) {
     foreach ($module in $devDistributions[$dist]) {
-        if (Test-Path (Join-Path $bundleSite $module)) {
-            throw "development package '$module' leaked into the bundle"
+        foreach ($candidate in @($module, "$module.py")) {
+            if (Test-Path (Join-Path $bundleSite $candidate)) {
+                throw "development package '$candidate' leaked into the bundle"
+            }
         }
+    }
+    # A removed module with a surviving dist-info still looks installed to importlib.metadata and
+    # to every dependency inventory. Treat that as a leak, not as cosmetic leftovers.
+    $metadata = Get-ChildItem $bundleSite -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match ('^' + ($dist -replace '-', '[-_]') + '-[0-9]') }
+    if ($metadata) {
+        throw "development package metadata '$($metadata[0].Name)' leaked into the bundle"
     }
 }
 Write-Host "    pruned $removed development-only entries"

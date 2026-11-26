@@ -62,3 +62,4 @@ htmlcov/
 # backend packaging scratch output (abandoned PyInstaller experiment; not used by any script)
 /app/backend/build/
 /.creatoros-root
+*.egg-info/

@@ -158,15 +158,21 @@ Set-Content -Path (Join-Path $releaseDir 'SHA256SUMS.txt') -Value $lines -Encodi
 # Generated after the digests so the document binds the installer hash that is actually shipping.
 # Without --artifact the SBOM is provenance for a build, not for the released bytes.
 Write-Step 'sbom: CycloneDX bound to the installer'
-$sbomPython = Join-Path $repo 'appackend.venvScriptspython.exe'
+$sbomPython = Join-Path $repo 'app\backend\.venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $sbomPython)) {
     throw "the backend virtualenv is required to generate the SBOM: $sbomPython"
 }
+$prerequisites = Join-Path $repo 'app\backend\src\creatoros\resources\prerequisites.v1.json'
+$sbomPythonScript = Join-Path $repo 'scripts\generate_sbom.py'
+$sourceSbomPath = Join-Path $releaseDir 'sbom-source.cdx.json'
+$prereqSbomPath = Join-Path $releaseDir 'sbom-prerequisites.cdx.json'
 $sbomPath = Join-Path $releaseDir 'sbom.cdx.json'
-$prerequisites = Join-Path $repo 'appackendsrccreatorosesourcesprerequisites.v1.json'
-& $sbomPython (Join-Path $repo 'scriptsgenerate_sbom.py') --output $sbomPath --repo-root $repo --version $desktopVersion --prerequisites $prerequisites --artifact $setup --check
-if ($LASTEXITCODE -ne 0) { throw 'SBOM generation failed' }
-
+& $sbomPython $sbomPythonScript --output $sourceSbomPath --repo-root $repo --version $desktopVersion --profile source --check
+if ($LASTEXITCODE -ne 0) { throw 'source SBOM generation failed' }
+& $sbomPython $sbomPythonScript --output $prereqSbomPath --repo-root $repo --version $desktopVersion --profile prerequisites --prerequisites $prerequisites --check
+if ($LASTEXITCODE -ne 0) { throw 'prerequisite SBOM generation failed' }
+& $sbomPython $sbomPythonScript --output $sbomPath --repo-root $repo --version $desktopVersion --profile artifact --prerequisites $prerequisites --artifact $setup --check
+if ($LASTEXITCODE -ne 0) { throw 'artifact SBOM generation failed' }
 Write-Step 'done'
 Write-Host "Installer: $setup"
 Write-Host "Verify with: powershell -ExecutionPolicy Bypass -File scripts\verify-install.ps1"

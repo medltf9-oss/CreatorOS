@@ -76,6 +76,7 @@ VENV_PATH = Path('app') / 'backend' / '.venv'
 FFMPEG_DIR = Path('tools') / 'ffmpeg' / 'bin'
 MANIFEST_PATH = Path('docs') / 'release' / 'DEPENDENCY_MANIFEST.md'
 PREREQUISITES_SCHEMA = 'creatoros.prerequisites.v1'
+PROFILES = frozenset({'source', 'prerequisites', 'artifact', 'all'})
 
 SELF_DISTRIBUTIONS = frozenset({'creatoros', 'creatoros-backend'})
 
@@ -942,10 +943,79 @@ def _application_component(
     return component
 
 
+def _declared_ffmpeg_components(repo_root: Path) -> tuple[list[dict[str, Any]], list[str]]:
+    """Return ffmpeg/ffprobe from the audit record, without reading a local binary.
+
+    This is the prerequisite profile: it must be reproducible on a machine that has not downloaded
+    the tools, and it records the declared hashes and licence status rather than re-hashing bytes
+    that may be absent. The artifact profile still checks the real binaries.
+    """
+    sections = _manifest_sections(repo_root) or {}
+    rows = sections.get('ffmpeg and ffprobe')
+    if not rows:
+        return [], [
+            'docs/release/DEPENDENCY_MANIFEST.md has no FFmpeg and ffprobe section; '
+            + 'no prerequisite component was recorded'
+        ]
+    version = _plain_markdown(rows.get('version', '')) or 'unknown'
+    licence_declaration = _plain_markdown(rows.get('licence', ''))
+    redistribution = _plain_markdown(rows.get('redistribution status', ''))
+    licence_name = licence_declaration.split(' ', 1)[0].strip(' (),') if licence_declaration else ''
+    errors: list[str] = []
+    if not licence_declaration:
+        errors.append('DEPENDENCY_MANIFEST.md records no FFmpeg licence')
+    if not redistribution:
+        errors.append('DEPENDENCY_MANIFEST.md records no FFmpeg redistribution status')
+    components: list[dict[str, Any]] = []
+    for binary in ('ffmpeg', 'ffprobe'):
+        digest = _plain_markdown(rows.get(f'{binary}.exe sha-256', '')).lower()
+        if not _is_sha256_hex(digest):
+            errors.append(f'DEPENDENCY_MANIFEST.md has no valid {binary}.exe SHA-256')
+            continue
+        properties: list[dict[str, str]] = [
+            {'name': 'creatoros:source', 'value': MANIFEST_PATH.as_posix()},
+            {'name': 'creatoros:version-source', 'value': MANIFEST_PATH.as_posix()},
+            {
+                'name': 'creatoros:scope-reason',
+                'value': 'external prerequisite declared by the dependency audit record; not bundled',
+            },
+        ]
+        component: dict[str, Any] = {
+            'type': 'application',
+            'bom-ref': f'creatoros-prerequisite:{binary}@{version}',
+            'name': binary,
+            'version': version,
+            'scope': 'excluded',
+            'hashes': [{'alg': 'SHA-256', 'content': digest}],
+        }
+        if licence_name:
+            component['licenses'] = [{'license': {'name': licence_name}}]
+            properties.append(
+                {'name': 'creatoros:license-declaration', 'value': licence_declaration}
+            )
+        else:
+            properties.append({'name': 'creatoros:license-status', 'value': 'unknown'})
+        if redistribution:
+            properties.append({'name': 'creatoros:redistribution-status', 'value': redistribution})
+        component['properties'] = _sorted_properties(properties)
+        components.append(component)
+    return components, errors
+
+
 def collect_components(
-    repo_root: Path, prerequisites: Path | None = None
+    repo_root: Path,
+    prerequisites: Path | None = None,
+    profile: str = 'all',
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    """Collect every component and return (components, collection errors)."""
+    """Collect components for one SBOM profile and return (components, collection errors).
+
+    Profiles separate three different claims: `source` describes the code and its declared
+    dependencies, `prerequisites` describes the external tools the user supplies, and `artifact`
+    describes the distributable bytes (including the installer hash). `all` keeps the historical
+    combined document for callers that have not migrated.
+    """
+    if profile not in PROFILES:
+        raise SbomError(f'unknown SBOM profile {profile!r}; expected one of {sorted(PROFILES)}')
     repo_root = repo_root.resolve()
     desktop_version = read_desktop_version(repo_root)
     pyproject = read_backend_pyproject(repo_root)
@@ -972,18 +1042,40 @@ def collect_components(
             'local FastAPI service',
         ),
     ]
+    if profile == 'prerequisites':
+        ffmpeg_components, ffmpeg_errors = _declared_ffmpeg_components(repo_root)
+        ollama_components, ollama_errors = collect_prerequisite_components(repo_root, prerequisites)
+        components = ffmpeg_components + ollama_components
+        errors.extend(ffmpeg_errors)
+        errors.extend(ollama_errors)
+        return components, errors
     node_components, node_errors = collect_node_components(repo_root)
     python_components, python_errors = collect_python_components(repo_root, pyproject)
+    components.extend(node_components)
+    components.extend(python_components)
+    errors.extend(node_errors)
+    errors.extend(python_errors)
+    if profile == 'source':
+        return components, errors
+    if profile == 'artifact':
+        # The installer does not carry FFmpeg or Ollama. The artifact document binds the bytes it
+        # does carry and describes the external prerequisites from the audit record, exactly as the
+        # prerequisite document does, so the source inventory is a subset of the artifact inventory.
+        ffmpeg_components, ffmpeg_errors = _declared_ffmpeg_components(repo_root)
+        prerequisite_components, prerequisite_errors = collect_prerequisite_components(
+            repo_root, prerequisites
+        )
+        components.extend(ffmpeg_components)
+        components.extend(prerequisite_components)
+        errors.extend(ffmpeg_errors)
+        errors.extend(prerequisite_errors)
+        return components, errors
     bundled_components, bundled_errors = collect_bundled_components(repo_root)
     prerequisite_components, prerequisite_errors = collect_prerequisite_components(
         repo_root, prerequisites
     )
-    components.extend(node_components)
-    components.extend(python_components)
     components.extend(bundled_components)
     components.extend(prerequisite_components)
-    errors.extend(node_errors)
-    errors.extend(python_errors)
     errors.extend(bundled_errors)
     errors.extend(prerequisite_errors)
     return components, errors
@@ -1253,6 +1345,7 @@ def generate_sbom(
     timestamp: str | None = None,
     serial: str | None = None,
     artifact: Path | None = None,
+    profile: str = 'all',
 ) -> dict[str, Any]:
     """Collect, build and write the SBOM; returns the document that was written."""
     repo_root = repo_root.resolve()
@@ -1263,7 +1356,7 @@ def generate_sbom(
     product_version = version.strip() if version is not None else desktop_version
     if not product_version:
         raise SbomError('--version must not be empty')
-    components, errors = collect_components(repo_root, prerequisites)
+    components, errors = collect_components(repo_root, prerequisites, profile=profile)
     binding = _artifact_binding(artifact) if artifact is not None else None
     document = build_document(
         components,
@@ -1304,6 +1397,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         help='JSON manifest declaring external prerequisites such as Ollama',
     )
     parser.add_argument(
+        '--profile',
+        choices=sorted(PROFILES),
+        default='all',
+        help='source: code and declared dependencies; prerequisites: external tools; artifact: distributable bytes (default: all)',
+    )
+    parser.add_argument(
         '--check',
         action='store_true',
         help='re-read the written document and exit 1 on structural problems',
@@ -1326,6 +1425,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             timestamp=args.timestamp,
             serial=args.serial,
             artifact=args.artifact,
+            profile=args.profile,
         )
     except SbomError as exc:
         print(f'error: {exc}', file=sys.stderr)
@@ -1344,8 +1444,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(f'  - {problem}', file=sys.stderr)
             return 1
         print(
-            f'wrote {args.output} ({component_count} components, {document["serialNumber"]}); '
-            f'check passed'
+            f'wrote {args.output} ({component_count} components, profile {args.profile}, '
+            f'{document["serialNumber"]}); check passed'
         )
         return 0
     print(f'wrote {args.output} ({component_count} components, {document["serialNumber"]})')

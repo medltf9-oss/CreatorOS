@@ -316,3 +316,71 @@ def test_the_shipped_prerequisites_manifest_is_what_the_generator_reads(sbom):
     assert properties['creatoros:expected-signer-subject'] == ollama_entry['signature']['expected_subject']
     assert 'creatoros:redistribution-status' in properties
 
+
+def test_source_profile_excludes_prerequisites_and_bundled_binaries(sbom, tmp_path):
+    """A source SBOM describes the checkout, not tools that may not be downloaded yet."""
+    document = sbom.generate_sbom(
+        REPO_ROOT,
+        tmp_path / 'source.cdx.json',
+        profile='source',
+        timestamp='2026-11-26T00:00:00Z',
+    )
+    names = {component['name'] for component in document['components']}
+    assert 'creatoros-desktop' in names
+    assert 'creatoros-backend' in names
+    assert 'ffmpeg' not in names and 'ffprobe' not in names
+    assert not [
+        item for item in document.get('properties', [])
+        if item.get('name') == 'creatoros:collection-error'
+    ]
+
+
+def test_prerequisites_profile_uses_declared_hashes_without_reading_binaries(sbom, tmp_path):
+    """The prerequisite SBOM must be reproducible on a machine with no FFmpeg download."""
+    manifest = REPO_ROOT / 'app' / 'backend' / 'src' / 'creatoros' / 'resources' / 'prerequisites.v1.json'
+    document = sbom.generate_sbom(
+        REPO_ROOT,
+        tmp_path / 'prerequisites.cdx.json',
+        profile='prerequisites',
+        prerequisites=manifest,
+        timestamp='2026-11-26T00:00:00Z',
+    )
+    components = {component['name']: component for component in document['components']}
+    assert set(components) == {'ffmpeg', 'ffprobe', 'ollama'}
+    sections = sbom._manifest_sections(REPO_ROOT) or {}
+    declared = sections['ffmpeg and ffprobe']
+    for binary in ('ffmpeg', 'ffprobe'):
+        component = components[binary]
+        expected = sbom._plain_markdown(declared[f'{binary}.exe sha-256']).lower()
+        assert component['hashes'] == [{'alg': 'SHA-256', 'content': expected}]
+        assert component['licenses']
+        properties = _properties(component)
+        assert 'creatoros:redistribution-status' in properties
+        assert 'creatoros:license-declaration' in properties
+    assert not [
+        item for item in document.get('properties', [])
+        if item.get('name') == 'creatoros:collection-error'
+    ]
+
+
+def test_artifact_profile_binds_the_installer_and_keeps_the_full_inventory(sbom, tmp_path):
+    installer = tmp_path / 'CreatorOS-Setup-test.exe'
+    installer.write_bytes(b'installer bytes')
+    document = sbom.generate_sbom(
+        REPO_ROOT,
+        tmp_path / 'artifact.cdx.json',
+        profile='artifact',
+        artifact=installer,
+        timestamp='2026-11-26T00:00:00Z',
+    )
+    digest = hashlib.sha256(b'installer bytes').hexdigest()
+    hashes = document['metadata']['component']['hashes']
+    assert {'alg': 'SHA-256', 'content': digest} in hashes
+    names = {component['name'] for component in document['components']}
+    assert 'creatoros-desktop' in names and 'creatoros-backend' in names
+
+
+def test_an_unknown_profile_is_rejected(sbom, tmp_path):
+    with pytest.raises(sbom.SbomError, match='unknown SBOM profile'):
+        sbom.generate_sbom(REPO_ROOT, tmp_path / 'bad.cdx.json', profile='everything')
+

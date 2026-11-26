@@ -7,7 +7,8 @@
 #   powershell -ExecutionPolicy Bypass -File scripts\release-gate.ps1 -Stage Artifact -ExpectedPublisher "Jane Doe"
 #   powershell -ExecutionPolicy Bypass -File scripts\release-gate.ps1 -Stage Release -ExpectedPublisher "Jane Doe" -EvidencePath docs\evidence\v1.0.0-clean-sac.json
 #
-# Stage Source    version, documentation, SBOM, tracked-secret scan, clean git tree
+# Stage Source    version, documentation, source + prerequisite SBOMs (generated when absent),
+#                 tracked-secret scan, clean git tree
 # Stage Artifact  Source + installer digest, manifest, Authenticode, timestamp, publisher
 # Stage Release   Artifact + clean SAC-on evidence + tag + GitHub release asset + CI + branch protection
 #
@@ -58,6 +59,118 @@ function Get-TrackedTextMatch {
         foreach ($item in $found) { $hits += ($relative + ' line ' + $item.LineNumber) }
     }
     return $hits
+}
+
+function Get-SbomPython {
+    $venv = Join-Path $repo 'app\backend\.venv\Scripts\python.exe'
+    if (Test-Path -LiteralPath $venv) { return $venv }
+    foreach ($name in @('python', 'py')) {
+        $command = Get-Command $name -ErrorAction SilentlyContinue
+        if ($command) { return $command.Source }
+    }
+    return $null
+}
+
+function New-SbomForGate {
+    param([string]$Profile, [string]$Output, [string]$Prerequisites)
+    $python = Get-SbomPython
+    if (-not $python) {
+        return @{ ok = $false; detail = 'no Python interpreter: create app\backend\.venv or put python on PATH' }
+    }
+    $arguments = @(
+        'scripts\generate_sbom.py',
+        '--output', $Output,
+        '--profile', $Profile,
+        '--version', $ReleaseVersion,
+        '--check'
+    )
+    if ($Prerequisites) { $arguments += @('--prerequisites', $Prerequisites) }
+    $text = @(& $python @arguments 2>&1)
+    $code = $LASTEXITCODE
+    $tail = ($text | Select-Object -Last 1) -join ' '
+    return @{ ok = ($code -eq 0); detail = "generated $Profile profile: $tail" }
+}
+
+function Test-SbomFile {
+    param(
+        [string]$Path,
+        [ValidateSet('source', 'prerequisites', 'artifact')][string]$Profile
+    )
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return @{ ok = $false; detail = "missing SBOM: $Path" }
+    }
+    try {
+        $document = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+        $problems = @()
+        if ([string]$document.bomFormat -ne 'CycloneDX') { $problems += "bomFormat is '$($document.bomFormat)', expected CycloneDX" }
+        if (@('1.4', '1.5', '1.6') -notcontains [string]$document.specVersion) { $problems += "specVersion is '$($document.specVersion)'" }
+        $documentVersion = [string]$document.metadata.component.version
+        if ($documentVersion -ne $ReleaseVersion) { $problems += "metadata.component.version is '$documentVersion', expected $ReleaseVersion" }
+        $serial = [string]$document.serialNumber
+        if ($serial -notmatch '^urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' -or
+            $serial -eq 'urn:uuid:00000000-0000-0000-0000-000000000000') {
+            $problems += "serialNumber is '$serial', expected a real urn:uuid"
+        }
+        $stamp = [datetime]::MinValue
+        $stampText = [string]$document.metadata.timestamp
+        $parsedStamp = [datetime]::TryParse(
+            $stampText,
+            [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::AssumeUniversal -bor [Globalization.DateTimeStyles]::AdjustToUniversal,
+            [ref]$stamp)
+        if (-not $parsedStamp) {
+            $problems += "metadata.timestamp is '$stampText'"
+        } else {
+            $ageDays = ((Get-Date).ToUniversalTime() - $stamp.ToUniversalTime()).TotalDays
+            if ($ageDays -gt 30) { $problems += "SBOM is $([math]::Round($ageDays)) days old; evidence must be fresh (<= 30)" }
+            if ($ageDays -lt -1) { $problems += 'SBOM timestamp is in the future' }
+        }
+        $components = @($document.components | Where-Object { $_ })
+        if ($components.Count -lt 1) { $problems += 'no components' }
+        $incomplete = @($components | Where-Object { -not $_.name -or -not $_.version -or -not $_.type })
+        if ($incomplete.Count -gt 0) { $problems += "$($incomplete.Count) component(s) missing name, version or type" }
+        $duplicateRefs = @($components | ForEach-Object { [string]$_.'bom-ref' } | Where-Object { $_ } | Group-Object | Where-Object { $_.Count -gt 1 })
+        if ($duplicateRefs.Count -gt 0) { $problems += "duplicate bom-ref: $((($duplicateRefs | ForEach-Object { $_.Name }) -join ', '))" }
+        $collectionErrors = @($components | Where-Object {
+            $_.properties -and @($_.properties | Where-Object { [string]$_.name -eq 'creatoros:collection-error' }).Count -gt 0
+        })
+        if ($collectionErrors.Count -gt 0) { $problems += "$($collectionErrors.Count) component(s) carry a collection error; the environment is incomplete" }
+        if ($Profile -eq 'source') {
+            foreach ($required in @('creatoros-desktop', 'creatoros-backend')) {
+                if (@($components | Where-Object { [string]$_.name -eq $required }).Count -eq 0) {
+                    $problems += "source SBOM has no $required component"
+                }
+            }
+            if ($components.Count -lt 3) { $problems += 'source SBOM has fewer than 3 components' }
+        }
+        if ($Profile -eq 'prerequisites') {
+            foreach ($required in @('ffmpeg', 'ffprobe')) {
+                $matches = @($components | Where-Object { [string]$_.name -eq $required })
+                if ($matches.Count -ne 1) {
+                    $problems += "prerequisite SBOM must carry exactly one $required component"
+                } elseif (@($matches[0].hashes | Where-Object { [string]$_.alg -eq 'SHA-256' -and $_.content }).Count -ne 1) {
+                    $problems += "$required carries no SHA-256 hash"
+                }
+            }
+            $unhashed = @($components | Where-Object {
+                @($_.hashes | Where-Object { [string]$_.alg -eq 'SHA-256' -and $_.content }).Count -eq 0
+            })
+            if ($unhashed.Count -gt 0) { $problems += "$($unhashed.Count) prerequisite component(s) carry no SHA-256 hash" }
+            $unlicensed = @($components | Where-Object {
+                -not $_.licenses -and -not ($_.properties | Where-Object { [string]$_.name -eq 'creatoros:license-status' })
+            })
+            if ($unlicensed.Count -gt 0) { $problems += "$($unlicensed.Count) prerequisite component(s) record no licence" }
+        }
+        if ($Profile -eq 'artifact') {
+            if ($components.Count -lt 3) { $problems += 'artifact SBOM has fewer than 3 components' }
+        }
+        if ($problems.Count -eq 0) {
+            return @{ ok = $true; detail = "$Path ($($components.Count) components, $Profile, version $documentVersion)" }
+        }
+        return @{ ok = $false; detail = "$Path failed: $($problems -join '; ')" }
+    } catch {
+        return @{ ok = $false; detail = "SBOM is not valid JSON: $Path ($($_.Exception.Message))" }
+    }
 }
 
 Write-Host ''
@@ -117,65 +230,58 @@ $secretHits = @($privateKeyHits + $tokenHits + $passwordHits | Select-Object -Un
 Add-Gate 'security.tracked-secrets' ($secretHits.Count -eq 0) $(if ($secretHits.Count -eq 0) { 'no private keys, tokens or literal signing passwords in tracked source/config files (docs and test fixtures excluded)' } else { 'review: ' + ($secretHits -join ', ') })
 
 # --------------------------------------------------------------------------------- SBOM and manifests
-# An SBOM that parses is not an SBOM. The document must describe this release, list components and
-# carry the fields a consumer needs (name, version, type), or the gate stays closed.
+# Three SBOMs, three claims. The source document describes the checkout and its dependencies; the
+# prerequisite document describes the tools the user supplies; the artifact document is bound to the
+# installer bytes. Source and prerequisite documents are generated when absent, so a clean clone can
+# run this stage without inventing evidence. An artifact SBOM is never generated here: it must hash a
+# real installer, which only the build produces.
 $releaseDir = Join-Path $repo "releases\$ReleaseVersion"
+$prereqManifest = Join-Path $repo 'app\backend\src\creatoros\resources\prerequisites.v1.json'
+$sourceSbomPath = Join-Path $releaseDir 'sbom-source.cdx.json'
+$prereqSbomPath = Join-Path $releaseDir 'sbom-prerequisites.cdx.json'
+
+foreach ($spec in @(
+    @{ Path = $sourceSbomPath; Profile = 'source' },
+    @{ Path = $prereqSbomPath; Profile = 'prerequisites' }
+)) {
+    $generationFailed = $false
+    if (-not (Test-Path -LiteralPath $spec.Path)) {
+        $generated = New-SbomForGate -Profile $spec.Profile -Output $spec.Path -Prerequisites $prereqManifest
+        if (-not $generated.ok) {
+            Add-Gate "release.sbom.$($spec.Profile)" $false $generated.detail
+            $generationFailed = $true
+        } else {
+            Write-Host ("  INFO  {0,-34} {1}" -f "release.sbom.$($spec.Profile)", $generated.detail) -ForegroundColor DarkGray
+        }
+    }
+    if (-not $generationFailed) {
+        $result = Test-SbomFile -Path $spec.Path -Profile $spec.Profile
+        Add-Gate "release.sbom.$($spec.Profile)" $result.ok $result.detail
+    }
+}
+
 $sbomCandidates = @(
     (Join-Path $releaseDir 'sbom.cdx.json'),
     (Join-Path $releaseDir 'sbom.spdx.json'),
     (Join-Path $repo "docs\release\sbom-$ReleaseVersion.cdx.json")
 )
 $sbomPath = $sbomCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
-$sbomOk = $false
-$sbomDetail = 'no SBOM found'
 if ($sbomPath) {
+    $artifactSbom = Test-SbomFile -Path $sbomPath -Profile 'artifact'
+    Add-Gate 'release.sbom' $artifactSbom.ok $artifactSbom.detail
     try {
-        $sbom = Get-Content -LiteralPath $sbomPath -Raw | ConvertFrom-Json
-        $problems = @()
-        if ([string]$sbom.bomFormat -ne 'CycloneDX') { $problems += "bomFormat is '$($sbom.bomFormat)', expected CycloneDX" }
-        if (@('1.4', '1.5', '1.6') -notcontains [string]$sbom.specVersion) { $problems += "specVersion is '$($sbom.specVersion)'" }
-        $sbomVersion = [string]$sbom.metadata.component.version
-        if ($sbomVersion -ne $ReleaseVersion) { $problems += "metadata.component.version is '$sbomVersion', expected $ReleaseVersion" }
-        $serial = [string]$sbom.serialNumber
-        if ($serial -notmatch '^urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' -or
-            $serial -eq 'urn:uuid:00000000-0000-0000-0000-000000000000') {
-            $problems += "serialNumber is '$serial', expected a real urn:uuid"
-        }
-        $stamp = [datetime]::MinValue
-        $stampText = [string]$sbom.metadata.timestamp
-        $parsedStamp = [datetime]::TryParse(
-            $stampText,
-            [Globalization.CultureInfo]::InvariantCulture,
-            [Globalization.DateTimeStyles]::AssumeUniversal -bor [Globalization.DateTimeStyles]::AdjustToUniversal,
-            [ref]$stamp)
-        if (-not $parsedStamp) {
-            $problems += "metadata.timestamp is '$stampText'"
-        } else {
-            $ageDays = ((Get-Date).ToUniversalTime() - $stamp.ToUniversalTime()).TotalDays
-            if ($ageDays -gt 30) { $problems += "SBOM is $([math]::Round($ageDays)) days old; evidence must be fresh (<= 30)" }
-            if ($ageDays -lt -1) { $problems += 'SBOM timestamp is in the future' }
-        }
-        $components = @($sbom.components | Where-Object { $_ })
-        if ($components.Count -lt 1) { $problems += 'no components' }
-        $hashed = @($components | Where-Object {
-            $_.hashes -and @($_.hashes | Where-Object { [string]$_.alg -eq 'SHA-256' -and $_.content }).Count -gt 0
-        })
-        if ($hashed.Count -lt 1) { $problems += 'no component carries a SHA-256 hash' }
-        $incomplete = @($components | Where-Object { -not $_.name -or -not $_.version -or -not $_.type })
-        if ($incomplete.Count -gt 0) { $problems += "$($incomplete.Count) component(s) missing name, version or type" }
-        $duplicateRefs = @($components | ForEach-Object { [string]$_.'bom-ref' } | Where-Object { $_ } | Group-Object | Where-Object { $_.Count -gt 1 })
-        if ($duplicateRefs.Count -gt 0) { $problems += "duplicate bom-ref: $((($duplicateRefs | ForEach-Object { $_.Name }) -join ', '))" }
-        if ($problems.Count -eq 0) {
-            $sbomOk = $true
-            $sbomDetail = "SBOM: $sbomPath ($($components.Count) components, CycloneDX $($sbom.specVersion), version $sbomVersion)"
-        } else {
-            $sbomDetail = "SBOM $($sbomPath) failed: $($problems -join '; ')"
-        }
+        $sourceRefs = @((Get-Content -LiteralPath $sourceSbomPath -Raw | ConvertFrom-Json).components | ForEach-Object { [string]$_.'bom-ref' })
+        $artifactRefs = @((Get-Content -LiteralPath $sbomPath -Raw | ConvertFrom-Json).components | ForEach-Object { [string]$_.'bom-ref' })
+        $missingRefs = @($sourceRefs | Where-Object { $_ -and $artifactRefs -notcontains $_ })
+        Add-Gate 'release.sbom.consistency' ($missingRefs.Count -eq 0) $(if ($missingRefs.Count -eq 0) { "artifact SBOM contains all $($sourceRefs.Count) source components" } else { "artifact SBOM omits $($missingRefs.Count) source component(s): $($missingRefs -join ', ')" })
     } catch {
-        $sbomDetail = "SBOM is not valid JSON: $sbomPath ($($_.Exception.Message))"
+        Add-Gate 'release.sbom.consistency' $false "cannot compare source and artifact SBOMs: $($_.Exception.Message)"
     }
+} elseif ($Stage -eq 'Source') {
+    Write-Host '  INFO  release.sbom                     no artifact SBOM yet; generated by build-release.ps1 after the installer exists' -ForegroundColor DarkGray
+} else {
+    Add-Gate 'release.sbom' $false "no artifact SBOM for $ReleaseVersion; run scripts\build-release.ps1"
 }
-Add-Gate 'release.sbom' $sbomOk $sbomDetail
 
 # The pinned prerequisite manifest is what the first-run wizard verifies against. It must stay
 # machine-readable, fully pinned and consistent with the audit record a release is judged by.

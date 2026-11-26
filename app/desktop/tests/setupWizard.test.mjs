@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-import { countStates, toneOf, verificationSummary } from '../src/setupModel.ts';
+import { countStates, requiredChecksFailure, toneOf, verificationSummary } from '../src/setupModel.ts';
 
 const read = (name) => readFileSync(new URL(`../src/${name}`, import.meta.url), 'utf8');
 
@@ -80,6 +80,16 @@ test('the wizard shows a verification record and never trusts presence alone', (
   assert.match(SETUP, /truth\.key === 'verified'/);
   assert.match(SETUP, /verificationOutcome\(result\)/);
   assert.match(SETUP, /outcome\.failing_ids/);
+});
+
+test('the 409 envelope is recognised from its code, not only a prefixed message', () => {
+  const envelope = requiredChecksFailure({ status: 409, code: 'REQUIRED_CHECKS_FAILING', message: 'media.ffmpeg, ai.ollama' });
+  assert.deepEqual(envelope, { code: 'REQUIRED_CHECKS_FAILING', ids: ['media.ffmpeg', 'ai.ollama'], message: 'media.ffmpeg, ai.ollama' });
+  const prefixed = requiredChecksFailure({ status: 409, message: 'REQUIRED_CHECKS_FAILING: media.ffmpeg' });
+  assert.deepEqual(prefixed?.ids, ['media.ffmpeg']);
+  assert.equal(requiredChecksFailure({ status: 409, code: 'SOMETHING_ELSE', message: 'media.ffmpeg' }), null);
+  assert.equal(requiredChecksFailure({ status: 500, code: 'REQUIRED_CHECKS_FAILING', message: 'media.ffmpeg' }), null);
+  assert.equal(requiredChecksFailure(new Error('network down')), null);
 });
 
 test('a failing required check requires a second, explicit override', () => {

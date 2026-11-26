@@ -23,16 +23,30 @@
 
 .PARAMETER KeepInstalled
     Leave the app running afterwards (default: close it).
+
+.PARAMETER AllowUnsigned
+    Accept an unsigned installer because it is a local development build. The build is reported as
+    unsigned and must not be published.
+
+.PARAMETER RequireSignature
+    Release evidence mode: require a valid Authenticode signature with an RFC 3161 timestamp.
+
+.PARAMETER ChecksumFile
+    SHA256SUMS.txt to verify the installer against (default: next to the installer).
 #>
 [CmdletBinding()]
 param(
     [switch]$Uninstall,
-    [switch]$KeepInstalled
+    [switch]$KeepInstalled,
+    [switch]$AllowUnsigned,
+    [switch]$RequireSignature,
+    [string]$ChecksumFile = ''
 )
 
 $ErrorActionPreference = 'Stop'
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repo = (Resolve-Path (Join-Path $scriptDir '..')).Path
+. (Join-Path $scriptDir 'lib\artifact-guard.ps1')
 $desktopVersion = (Get-Content (Join-Path $repo 'app\desktop\package.json') -Raw | ConvertFrom-Json).version
 $setup = Join-Path $repo "releases\$desktopVersion\CreatorOS-Setup-$desktopVersion.exe"
 $installDir = Join-Path $env:LOCALAPPDATA 'Programs\CreatorOS'
@@ -51,6 +65,28 @@ function Check($name, $ok, $detail) {
 }
 
 if (-not (Test-Path $setup)) { throw "installer not found: $setup (run scripts\build-release.ps1)" }
+
+# Verify the bytes and the signature immediately before the installer runs: a stale, tampered or
+# wrong-version installer is refused here, so nothing below starts it. Unsigned local builds need
+# -AllowUnsigned; release evidence runs use -RequireSignature.
+$guardArguments = @{ Path = $setup }
+if ($ChecksumFile) { $guardArguments['ChecksumFile'] = $ChecksumFile }
+if ($RequireSignature) { $guardArguments['RequireSignature'] = $true }
+if ($AllowUnsigned) { $guardArguments['AllowUnsigned'] = $true }
+try {
+    $artifact = Assert-ArtifactVerified @guardArguments
+    if ($artifact.Unsigned) {
+        $signatureSummary = 'UNSIGNED dev build, must not be published'
+    } else {
+        $signatureSummary = "signature=$($artifact.SignatureStatus), timestamped=$($artifact.Timestamped)"
+    }
+    Check 'installer artifact verified' $true ("sha256={0}..., {1}" -f $artifact.Sha256.Substring(0, 16), $signatureSummary)
+} catch {
+    Check 'installer artifact verified' $false $_.Exception.Message
+    Write-Host "  refusing to run the installer: $setup" -ForegroundColor Red
+    Write-Host "$(@($results | Where-Object { -not $_.ok }).Count) check(s) failed" -ForegroundColor Red
+    exit 1
+}
 
 Write-Host "`n==> installing $desktopVersion" -ForegroundColor Cyan
 try {

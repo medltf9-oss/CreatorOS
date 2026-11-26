@@ -239,10 +239,11 @@ PE checksum field and the appended signature blob, so flipping a byte **near the
 
 A valid signature is necessary, not sufficient. After the first signed build:
 
-1. `powershell -File scripts\verify-install.ps1` - installs, checks both shortcuts, launches the app,
-   confirms the bundled backend and the database revision (12 checks);
-2. `powershell -File scripts\verify-install.ps1 -Uninstall` - adds 5 checks that uninstalling removes
-   the shortcuts and leaves the data root intact;
+1. `powershell -File scripts\verify-install.ps1 -RequireSignature` - verifies the signed bytes against
+   `SHA256SUMS.txt`, then installs, checks both shortcuts, launches the app, confirms the bundled
+   backend and the database revision (12 checks);
+2. `powershell -File scripts\verify-install.ps1 -Uninstall -RequireSignature` - adds 5 checks that
+   uninstalling removes the shortcuts and leaves the data root intact;
 3. install it on a **clean** Windows 11 machine with Smart App Control on and **no** development tools.
    This machine cannot be that machine: it has Python, Node, the Windows SDK and the build tree, all of
    which change what SAC sees. Only a clean machine answers "will a stranger be able to run this?".
