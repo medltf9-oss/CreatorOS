@@ -78,7 +78,7 @@ function New-SbomForGate {
         return @{ ok = $false; detail = 'no Python interpreter: create app\backend\.venv or put python on PATH' }
     }
     $arguments = @(
-        'scripts\generate_sbom.py',
+        (Join-Path $repo 'scripts\generate_sbom.py'),
         '--output', $Output,
         '--profile', $Profile,
         '--version', $ReleaseVersion,
