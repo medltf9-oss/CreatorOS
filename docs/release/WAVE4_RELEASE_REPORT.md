@@ -81,7 +81,7 @@ development checkout at the same commit.
 | Desktop checks | typecheck, unit tests and production build green in CI at `b10fe00`; no product-code change this wave |
 | CI at `b10fe00` | run `45818643202`: backend **1,648 passed, 35 skipped**, 0 failed; desktop green |
 | Clean clone | Source gate **13/13 PASSED**; `backend_lock.py --check` 32 distributions |
-| Artifact gate (local) | **22 passed, 6 failed** — every failure is the expected unsigned/no-certificate set |
+| Artifact gate (local) | all non-signing checks pass; **6 expected failures** are the unsigned/no-certificate set |
 
 The installer was packaged from `d80aedd`; `b10fe00` changes only verification scripts, tests and
 release documents, so the packaged product bytes are unchanged. The artifact SBOM is bound to the
@@ -160,7 +160,8 @@ From specialist 5, for the eventual 1.0.0 build:
 3. Decide FFmpeg and Ollama rights/routes in writing; if bundling, supply corresponding source and
    notices and approve the separate-asset design.
 4. Decide whether 1.0.0 requires full offline operation; that choice determines the asset layout.
-5. Accept or schedule the residual engineering defects: interpreter digest pinning (D-6), `ffprobe`
+5. Decide whether to bind the source SBOM to the commit: `releases/` is ignored, and the gate currently checks structure and a 30-day freshness window but not that the document's timestamp equals `HEAD`. A clean clone regenerates it correctly; an old SBOM in a developer checkout can still pass. Adding a timestamp/HEAD equality gate is the smallest fix.
+6. Accept or schedule the residual engineering defects: interpreter digest pinning (D-6), `ffprobe`
    verification (D-7), Ollama consent rendering/recording (D-8), dead `install` config (D-9), stale
    default paths (D-10), mid-walk error classification (D-11), FFmpeg URL/override UX (D-12), single
    ffprobe digest source (D-13), and the documented `npm run package` bypass (D-5).
