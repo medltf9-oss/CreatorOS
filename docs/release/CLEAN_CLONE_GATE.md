@@ -39,14 +39,15 @@ tree (`git status --porcelain` empty). Once this branch is merged, a default clo
 
 ## Result
 
-Clone and backend environment created from commit `b10fe009dab65d7c092a8ab95079a68347564115`
-(2026-11-26T13:19:43+01:00), then fast-forwarded from the earlier `d80aedd` run. `git status
---porcelain` was empty; no repository file was modified by the verification.
+Clone and backend environment created at `d80aedd`, then reset to commit
+`b10fe009dab65d7c092a8ab95079a68347564115` (2026-11-26T13:19:43+01:00), which is a descendant of
+the earlier clone. `git status --porcelain` was empty; no repository file was modified by the
+verification.
 
 | Evidence | Value |
 | --- | --- |
 | Clone HEAD | `b10fe009dab65d7c092a8ab95079a68347564115` |
-| Runtime lock in the fresh environment | `backend_lock.py --check` passes, 32 distributions |
+| Runtime lock in the fresh environment | all 32 lock pins at exact versions; `backend_lock.py --check` exits 0 (the venv also contains `pip`, `packaging` and the editable project, none in the lock) |
 | Source gate | **13 passed, 0 failed**, `RELEASE GATE: PASSED` |
 | Source SBOM | 48 components, serial `urn:uuid:55491264-5c86-556a-b907-4b689f343e40` |
 | Source SBOM SHA-256 | `38BCB7B8DBAA360C58800AB575632E2ED9EF00A2ED2A1514F733A877CD44D8DD` |
