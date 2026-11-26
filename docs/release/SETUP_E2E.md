@@ -54,6 +54,11 @@ cd D:\CreatorOS\app\desktop
 node --test tests\setupE2E.test.mjs
 ```
 
+The suite skips itself (three skipped tests, with the missing prerequisite in the reason) when
+the backend virtualenv, the Electron binary, the renderer build or the pinned FFmpeg is absent,
+so CI's unit-test job does not fail for a missing GUI prerequisite. On the release machine all
+four exist and every journey runs.
+
 Optional override of the interpreter used by the UI test (defaults to the backend venv):
 
 ```powershell

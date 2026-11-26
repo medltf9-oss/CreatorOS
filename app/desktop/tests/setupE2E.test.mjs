@@ -37,6 +37,20 @@ const FFPROBE = path.join(REPO, 'tools', 'ffmpeg', 'bin', 'ffprobe.exe');
 const START_TIMEOUT = 180000;
 const UI_TIMEOUT = 90000;
 
+// CI runs the unit suite without a backend virtualenv, a renderer build or the pinned FFmpeg,
+// so the journey is skipped there instead of failing on an absent prerequisite. On a developer
+// machine, or on the release machine, all four exist and the suite runs for real.
+const missingPrerequisites = [
+  ['backend virtualenv', PYTHON],
+  ['Electron binary', ELECTRON],
+  ['renderer build', DIST_INDEX],
+  ['ffmpeg', FFMPEG],
+  ['ffprobe', FFPROBE],
+].filter(([, target]) => !fs.existsSync(target)).map(([label]) => label);
+const SKIP_REASON = missingPrerequisites.length
+  ? 'prerequisites missing: ' + missingPrerequisites.join(', ')
+  : false;
+
 const manifest = JSON.parse(fs.readFileSync(MANIFEST, 'utf8'));
 const ffmpegComponent = manifest.components.find((component) => component.id === 'ffmpeg');
 const PINNED_SHA = String(ffmpegComponent.acquisition.sha256).toLowerCase();
@@ -367,7 +381,7 @@ async function withApp(root, run) {
   }
 }
 
-test('setup wizard shows present-unverified, verifies the real bytes, notices a changed file and surfaces the 409', { timeout: 300000 }, async () => {
+test('setup wizard shows present-unverified, verifies the real bytes, notices a changed file and surfaces the 409', { timeout: 300000, skip: SKIP_REASON }, async () => {
   const root = await prepareRoot({ withFfmpeg: true });
   try {
     await withApp(root, async (app) => {
@@ -411,7 +425,7 @@ test('setup wizard shows present-unverified, verifies the real bytes, notices a 
   }
 });
 
-test('the 409 decision point offers Complete anyway, pressing it records the override and leaves the wizard', { timeout: 300000 }, async () => {
+test('the 409 decision point offers Complete anyway, pressing it records the override and leaves the wizard', { timeout: 300000, skip: SKIP_REASON }, async () => {
   const root = await prepareRoot({ withFfmpeg: false });
   try {
     await withApp(root, async (app) => {
@@ -460,7 +474,7 @@ test('the 409 decision point offers Complete anyway, pressing it records the ove
   }
 });
 
-test('a completion recorded outside the wizard (renderer API) is reflected by the wizard after Re-check', { timeout: 300000 }, async () => {
+test('a completion recorded outside the wizard (renderer API) is reflected by the wizard after Re-check', { timeout: 300000, skip: SKIP_REASON }, async () => {
   const root = await prepareRoot({ withFfmpeg: false });
   try {
     await withApp(root, async (app) => {
