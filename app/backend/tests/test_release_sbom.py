@@ -319,6 +319,8 @@ def test_the_shipped_prerequisites_manifest_is_what_the_generator_reads(sbom):
 
 def test_source_profile_excludes_prerequisites_and_bundled_binaries(sbom, tmp_path):
     """A source SBOM describes the checkout, not tools that may not be downloaded yet."""
+    if not (REPO_ROOT / 'app' / 'backend' / '.venv').exists():
+        pytest.skip('source resolution needs the backend virtualenv; CI installs dependencies elsewhere')
     document = sbom.generate_sbom(
         REPO_ROOT,
         tmp_path / 'source.cdx.json',
