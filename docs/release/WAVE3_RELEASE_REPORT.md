@@ -1,7 +1,7 @@
 # Wave 3 release-candidate report
 
 **Date:** 2026-11-26  
-**Branch:** `release/v1.0.0-readiness` (four commits on top of merged `main` at `0683773`)  
+**Branch:** `release/v1.0.0-readiness` (a short series of commits on top of merged `main` at `0683773`)  
 **Reviewed code commit:** `ab4499a`  
 **Pull request:** #7 (draft)  
 **Product version:** `0.8.0`. No `v1.0.0` tag, installer or public release was created.
