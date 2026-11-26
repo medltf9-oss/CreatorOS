@@ -152,6 +152,71 @@ def test_unrecorded_site_packages_file_is_fatal(tmp_path):
     assert any('unrecorded site-packages' in cause for cause in report['summary']['causes'])
 
 
+def test_missing_declared_runtime_dependency_is_fatal(tmp_path):
+    payload = make_payload(tmp_path)
+    write_dist(
+        payload,
+        'creatoros_backend-0.8.0.dist-info',
+        simple_dist('creatoros-backend', '0.8.0', 'creatoros/__init__.py'),
+    )
+    pyproject = write_pyproject(tmp_path, ('fastapi>=0.115',))
+    output = tmp_path / 'inventory.json'
+    result = run_inventory(payload, '--json-out', str(output), pyproject=pyproject)
+    assert result.returncode == 1
+    report = read_report(output)
+    assert report['declared_runtime_dependencies']['missing_from_bundle'] == [
+        {'name': 'fastapi', 'requirement': 'fastapi>=0.115', 'reason': 'not present in the payload'}
+    ]
+    assert any('declared runtime dependency' in cause for cause in report['summary']['causes'])
+
+
+def test_sbom_claiming_an_absent_distribution_is_fatal(tmp_path):
+    payload = make_payload(tmp_path)
+    write_dist(
+        payload,
+        'creatoros_backend-0.8.0.dist-info',
+        simple_dist('creatoros-backend', '0.8.0', 'creatoros/__init__.py'),
+    )
+    pyproject = write_pyproject(tmp_path)
+    sbom = tmp_path / 'sbom.cdx.json'
+    sbom.write_text(
+        json.dumps(
+            {
+                'bomFormat': 'CycloneDX',
+                'specVersion': '1.5',
+                'metadata': {
+                    'component': {
+                        'type': 'application',
+                        'name': 'creatoros-backend',
+                        'version': '0.8.0',
+                        'bom-ref': 'pkg:pypi/creatoros-backend@0.8.0',
+                    }
+                },
+                'components': [
+                    {
+                        'type': 'library',
+                        'name': 'ghost',
+                        'version': '9.9',
+                        'bom-ref': 'pkg:pypi/ghost@9.9',
+                        'purl': 'pkg:pypi/ghost@9.9',
+                    }
+                ],
+            }
+        ),
+        encoding='utf-8',
+    )
+    output = tmp_path / 'inventory.json'
+    result = run_inventory(
+        payload, '--json-out', str(output), pyproject=pyproject, sbom=sbom
+    )
+    assert result.returncode == 1
+    report = read_report(output)
+    assert report['sbom_comparison']['in_sbom_not_in_bundle'] == [
+        {'name': 'ghost', 'version': '9.9', 'kind': 'absent-from-payload'}
+    ]
+    assert any('SBOM distribution(s) absent' in cause for cause in report['summary']['causes'])
+
+
 def test_first_party_version_mismatch_is_fatal(tmp_path):
     payload = make_payload(tmp_path)
     write_dist(

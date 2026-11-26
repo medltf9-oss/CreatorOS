@@ -285,6 +285,40 @@ if ($sbomPath) {
     Add-Gate 'release.sbom' $false "no artifact SBOM for $ReleaseVersion; run scripts\build-release.ps1"
 }
 
+# The artifact stage must inspect the payload that is actually packaged, not only the SBOM. The
+# inventory parses every shipped dist-info/RECORD and fails on a missing dependency, an out-of-lock
+# distribution, an unowned file, or an SBOM that claims bytes the payload does not contain.
+if ($Stage -ne 'Source') {
+    $payloadDir = Join-Path $releaseDir 'win-unpacked\resources\backend'
+    $gatePython = Get-SbomPython
+    if (-not $gatePython) {
+        Add-Gate 'artifact.payload-inventory' $false 'no Python interpreter: create app\backend\.venv or put python on PATH'
+    } elseif (-not (Test-Path -LiteralPath $payloadDir)) {
+        Add-Gate 'artifact.payload-inventory' $false "packaged payload not found: $payloadDir; run scripts\build-release.ps1"
+    } elseif (-not $sbomPath) {
+        Add-Gate 'artifact.payload-inventory' $false "no artifact SBOM to compare against $payloadDir"
+    } else {
+        $inventoryJson = Join-Path $releaseDir 'runtime-inventory.gate.json'
+        $inventoryText = @(& $gatePython (Join-Path $repo 'scripts\runtime-inventory.py') --payload $payloadDir --repo-root $repo --pyproject (Join-Path $repo 'app\backend\pyproject.toml') --sbom $sbomPath --json-out $inventoryJson 2>&1)
+        $inventoryCode = $LASTEXITCODE
+        $inventoryTail = ($inventoryText | Select-Object -Last 1) -join ' '
+        Add-Gate 'artifact.payload-inventory' ($inventoryCode -eq 0) $(if ($inventoryCode -eq 0) { 'packaged payload matches its SBOM and declared dependencies' } else { "runtime inventory failed: $inventoryTail" })
+        if ($inventoryCode -eq 0 -and (Test-Path -LiteralPath $inventoryJson)) {
+            try {
+                $inventory = Get-Content -LiteralPath $inventoryJson -Raw | ConvertFrom-Json
+                $sbomDocument = Get-Content -LiteralPath $sbomPath -Raw | ConvertFrom-Json
+                $treeProperty = @($sbomDocument.metadata.component.properties | Where-Object { $_.name -eq 'creatoros:payload-tree-sha256' }) | Select-Object -First 1
+                $fileProperty = @($sbomDocument.metadata.component.properties | Where-Object { $_.name -eq 'creatoros:payload-files' }) | Select-Object -First 1
+                $treeOk = $treeProperty -and ([string]$treeProperty.value -eq [string]$inventory.payload.tree_sha256)
+                $filesOk = $fileProperty -and ([int]$fileProperty.value -eq [int]$inventory.payload.file_count)
+                Add-Gate 'artifact.payload-sbom' ($treeOk -and $filesOk) "payload tree $($inventory.payload.tree_sha256), $($inventory.payload.file_count) files; SBOM tree $($treeProperty.value), $($fileProperty.value) files"
+            } catch {
+                Add-Gate 'artifact.payload-sbom' $false "cannot compare payload inventory with the artifact SBOM: $($_.Exception.Message)"
+            }
+        }
+    }
+}
+
 # The pinned prerequisite manifest is what the first-run wizard verifies against. It must stay
 # machine-readable, fully pinned and consistent with the audit record a release is judged by.
 $prereqPath = Join-Path $repo 'app\backend\src\creatoros\resources\prerequisites.v1.json'

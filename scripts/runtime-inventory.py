@@ -1048,6 +1048,34 @@ def build_inventory(
             + ", payload says "
             + ", ".join(first_party_mismatch["packaged_versions"])
         )
+    if declared_missing:
+        causes.append(
+            f"{len(declared_missing)} declared runtime dependency/dependencies missing from the payload: "
+            + ", ".join(item["name"] for item in declared_missing)
+        )
+    if version_mismatches:
+        causes.append(
+            f"{len(version_mismatches)} declared runtime dependency version mismatch(es): "
+            + ", ".join(item["name"] for item in version_mismatches)
+        )
+    if sbom_comparison["status"] == "compared":
+        if sbom_comparison["in_bundle_not_in_sbom"]:
+            causes.append(
+                f"{len(sbom_comparison['in_bundle_not_in_sbom'])} payload distribution(s) absent from or different in the SBOM"
+            )
+        if sbom_comparison["in_sbom_not_in_bundle"]:
+            causes.append(
+                f"{len(sbom_comparison['in_sbom_not_in_bundle'])} SBOM distribution(s) absent from the payload"
+            )
+        sbom_first_party = sbom_comparison["first_party"]["sbom_versions"]
+        payload_first_party = sbom_comparison["first_party"]["bundle_versions"]
+        if sbom_first_party != payload_first_party:
+            causes.append(
+                "first-party version mismatch between payload and SBOM: payload "
+                + (", ".join(payload_first_party) or "none")
+                + ", SBOM "
+                + (", ".join(sbom_first_party) or "none")
+            )
     if missing_other:
         causes.append(f"{missing_other} RECORD file(s) missing from the payload")
     if size_mismatches:

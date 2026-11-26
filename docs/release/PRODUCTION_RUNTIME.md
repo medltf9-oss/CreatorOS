@@ -63,7 +63,11 @@ app\backend\.venv\Scripts\python.exe scripts\runtime-inventory.py `
 `build-release.ps1` fails the build unless all of the following hold: the inventory exits 0; the
 artifact SBOM tree hash and file count equal the inventory's; the source and artifact `pkg:pypi`
 sets agree; the first-party versions agree; and `payload_metadata.py --check` passes on the packaged
-tree.
+tree. The inventory itself now treats missing or wrong-version declared dependencies and any
+payload/SBOM disagreement as findings (exit 1), so it cannot report "clean" for a payload that lacks
+its declared runtime. `release-gate.ps1 -Stage Artifact` repeats the inventory against the packaged
+payload and compares its tree hash and file count with the artifact SBOM, so the gate opens the
+payload rather than trusting the document alone.
 
 ## Why the Wave 3 defect is closed
 

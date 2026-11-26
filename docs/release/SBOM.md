@@ -193,9 +193,16 @@ At the **Artifact** and **Release** stages the gate looks for `sbom.cdx.json`, `
 `docs\release\sbom-<version>.cdx.json` and requires the chosen document to be a valid artifact
 profile: its `metadata.component.hashes` must contain the exact SHA-256 of the installer being
 released (`artifact.sbom`). That is what makes the document evidence for an artifact instead of
-provenance for a build: regenerating the SBOM is required whenever the installer changes. The gate
-does not verify licences or the truth of supplier fields; those are the generator's and the
-reviewer's job. `--check` remains part of the release procedure: run it, keep its exit code 0, and
+provenance for a build: regenerating the SBOM is required whenever the installer changes.
+
+At those same stages the gate also runs `scripts/runtime-inventory.py` against
+`releases\<version>\win-unpacked\resources\backend` and fails unless the inventory exits 0 with no
+findings. It then compares the inventory's canonical tree SHA-256 and file count with
+`creatoros:payload-tree-sha256` and `creatoros:payload-files` on the artifact document
+(`artifact.payload-inventory`, `artifact.payload-sbom`). A component-complete SBOM for a different
+payload, a missing declared runtime dependency, or a distribution absent from the payload is a
+failure. The gate does not verify licences or the truth of supplier fields; those are the
+generator's and the reviewer's job. `--check` remains part of the release procedure: run it, keep its exit code 0, and
 attach the same file the gate will read. Do not hand-edit the document to satisfy the gate.
 
 Two further gates in the same stage validate the prerequisites manifest itself:

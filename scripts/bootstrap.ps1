@@ -83,6 +83,9 @@ else {
       # The committed lock pins the exact runtime closure, so a clean clone builds the same
       # environment as the release machine. Editable install brings only first-party code.
       & .\.venv\Scripts\python.exe -m pip install -r requirements-runtime.lock -q
+      # Release tooling only: backend_lock.py evaluates PEP 508 markers with packaging. It is not a
+      # runtime dependency and is deliberately not in the runtime lock or the shipped payload.
+      & .\.venv\Scripts\python.exe -m pip install "packaging>=24" -q
       & .\.venv\Scripts\python.exe -m pip install --no-deps -e . -q
     } finally { Pop-Location }
   }
