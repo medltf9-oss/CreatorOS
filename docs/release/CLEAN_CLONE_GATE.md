@@ -39,9 +39,20 @@ directory. The documented sequence still `cd`s into the clone because that is wh
 
 ## Result
 
-Recorded on the Wave 3 readiness commit: bootstrap exit 0, working tree clean, Source gate
-**13 passed, 0 failed** (`RELEASE GATE: PASSED`), with the artifact SBOM checks reported as not
-required. The exact log is attached to the release report and the PR.
+Clone created and bootstrapped at `1334fe9`: clone exit 0, `git status --porcelain` empty before
+and after bootstrap, Source gate **13 passed, 0 failed** (`RELEASE GATE: PASSED`), with the
+artifact SBOM checks reported as not required.
+
+The same clone was then fast-forwarded to `5812915` (the CI-safe skip for this suite, no runtime
+change), reset clean, and the gate re-run from the clone root: **13 passed, 0 failed** again.
+
+| Evidence | Value |
+| --- | --- |
+| Clone HEAD | `5812915bdbba408d293f3ac58d54129e03576074` |
+| Bootstrap | exit 0, working tree clean after apply |
+| Source gate | 13 passed, 0 failed, PASSED |
+| Source SBOM in clean clone | 49 components (the development checkout reports 66; both pass the same structural checks) |
+| Artifact SBOM | absent by design at Source; build-release.ps1 generates it after the installer |
 
 ## What this does not prove
 
