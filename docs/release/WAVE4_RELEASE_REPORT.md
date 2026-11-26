@@ -36,7 +36,7 @@ Fresh 0.8.0 payload: **2,645 files / 62,513,538 bytes / 33 distributions** (32 l
 Artifact SBOM: **51 components** (33 Python, 18 non-Python), serial
 `urn:uuid:8fa3f433-bbad-5548-a6ed-59835a2a1563`, installer SHA-256
 `d3a73f608d903e72de35a5f2def18d31ed367dccbc4fe922ac7f739580e9cc07`. The separate
-`runtime-inventory.py` report shows **0 absent in either direction**, 0 size/hash mismatches and exit 0.
+`runtime-inventory.py` report shows **0 Python components absent in either direction**, 0 size/hash mismatches and exit 0.
 
 ### 1.2 First-party version metadata
 
@@ -67,6 +67,9 @@ Fresh clone at `b10fe00`, no build output, no artifact SBOM: **48 components**, 
 development checkout at the same commit.
 
 ## 2. Final 0.8.0 build evidence
+
+The Artifact results below come from `.\scripts\release-gate.ps1 -Stage Artifact -ReleaseVersion 0.8.0`;
+the gate exits 1 on the six signing/certificate failures and has no expected-failure class.
 
 | Item | Evidence |
 | --- | --- |
@@ -169,11 +172,11 @@ From specialist 5, for the eventual 1.0.0 build:
 | ID | Defect | Severity | Owner | Disposition |
 | --- | --- | --- | --- | --- |
 | D-5 | Alternate `npm run package` path bypasses the release build/gate | Medium | Release engineering | Gate or remove before 1.0.0 |
-| D-6 | Interpreter signature check is warn-only | High | Release engineering / security | Decide fail-closed policy and test it |
-| D-7 | `ffprobe.exe` is executed but not byte-verified | Medium | Prerequisite tooling | Add digest + verification |
+| D-6 | Unsigned/substituted interpreter accepted; no digest pin | Medium | Release engineering / security | Enforce a pinned digest or hard signature policy |
+| D-7 | `ffprobe.exe` is executed but not byte-verified; `companion_filenames` is dead config | Medium | Prerequisite tooling | Pin and verify, or refuse an unverified sibling |
 | D-8 | Ollama `consent.required` is exposed but not rendered/recorded | Medium | Product / setup | Wire UI and audit record |
-| D-9 | Thin-directory provenance is incomplete | Low | Installer | Fold into payload manifest work |
-| D-10 | Eight pre-existing ruff findings in release scripts | Low | Quality | Clean up separately |
+| D-9 | `install` block is dead configuration | Low | Product / prerequisites | Remove it or implement and guard the action |
+| D-10 | Stale `releases/0.8.0` defaults in `runtime-inventory.py` | Low | Tooling | Derive from project version or require explicit arguments |
 | D-11 | Mid-walk `OSError` exits 1, not the documented 2 | Low | Tooling | Align exit classification |
 | D-12 | FFmpeg URL/409 override UX is ambiguous | Low | Product | Clarify before acceptance |
 | D-13 | Two sources for the `ffprobe` digest | Low | Prerequisite tooling | Use one manifest source |
