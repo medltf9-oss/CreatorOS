@@ -363,7 +363,7 @@ def validate_record_entry(entry: str) -> tuple[list[str] | None, str | None]:
         return None, "NUL byte in path"
     if "\\" in entry:
         return None, "backslash in RECORD path; wheel RECORDs use forward slashes"
-    if entry.startswith("/") or entry.startswith("~"):
+    if entry.startswith(("/", "~")):
         return None, "absolute or home-relative path"
     if re.match(r"^[A-Za-z]:", entry):
         return None, "drive-letter path"
@@ -623,12 +623,14 @@ def build_inventory(
         "metadata_errors": [],
         "record_errors": [],
         "payload_errors": [],
+        "unrecorded_site_packages_files": [],
     }
     claimed: dict[str, dict] = {}
     claimed_bytes = 0
     overlap: list[dict] = []
     missing_pyc = 0
     missing_console_scripts = 0
+    missing_optional_extensions = 0
     missing_other = 0
     outside_site_packages: list[dict] = []
     size_mismatches: list[dict] = []
@@ -717,6 +719,12 @@ def build_inventory(
                     missing_pyc += 1
                 elif "/Scripts/" in entry or entry.startswith("Scripts/"):
                     missing_console_scripts += 1
+                elif entry.endswith(".pyd") and Path(
+                    re.sub(r"\.(?:cp\d+-[^.]+\.)?pyd$", ".py", resolved)
+                ).is_file():
+                    # A compiled accelerator with a pure-Python sibling is optional; Smart App
+                    # Control blocks unsigned third-party extensions on this build machine.
+                    missing_optional_extensions += 1
                 else:
                     missing_other += 1
                 continue
@@ -836,6 +844,9 @@ def build_inventory(
         if item["category"] != "site_packages_unrecorded":
             continue
         parts = item["path"].split("/")
+        if any(part.endswith(".dist-info") for part in parts):
+            continue
+        violations["unrecorded_site_packages_files"].append(item)
         top = parts[2] if len(parts) > 3 else "(loose files)"
         bucket = unrecorded_top_level.setdefault(top, {"files": 0, "bytes": 0})
         bucket["files"] += 1
@@ -1027,12 +1038,41 @@ def build_inventory(
         causes.append(f"{len(violations['record_errors'])} RECORD problem(s)")
     if violations["payload_errors"]:
         causes.extend(violations["payload_errors"])
+    if violations["unrecorded_site_packages_files"]:
+        names = ", ".join(item["path"] for item in violations["unrecorded_site_packages_files"])
+        causes.append(f"unrecorded site-packages file(s): {names}")
+    if first_party_mismatch is not None:
+        causes.append(
+            "first-party version mismatch: pyproject says "
+            + first_party_mismatch["declared_version"]
+            + ", payload says "
+            + ", ".join(first_party_mismatch["packaged_versions"])
+        )
+    if missing_other:
+        causes.append(f"{missing_other} RECORD file(s) missing from the payload")
+    if size_mismatches:
+        causes.append(f"{len(size_mismatches)} RECORD size mismatch(es)")
+    if hash_mismatches:
+        causes.append(f"{len(hash_mismatches)} RECORD hash mismatch(es)")
     exit_code = EXIT_FINDINGS if causes else EXIT_OK
 
     scope_counts = {"runtime": 0, "dev": 0, "transitive": 0}
     for distribution in distributions:
         scope_counts[distribution["scope"]] += 1
 
+    tree_digest = hashlib.sha256()
+    for relative in payload_files:
+        file_hash = sha256_file(payload / relative)
+        tree_digest.update(relative.encode("utf-8") + b"\0" + file_hash.encode("ascii") + b"\n")
+    provenance_complete = (
+        not violations["unrecorded_site_packages_files"]
+        and first_party_mismatch is None
+        and missing_other == 0
+        and not size_mismatches
+        and not hash_mismatches
+        and not violations["record_errors"]
+        and not violations["out_of_payload_record_entries"]
+    )
     report = {
         "schema": {"name": TOOL_NAME, "version": TOOL_VERSION},
         "payload": {
@@ -1040,6 +1080,16 @@ def build_inventory(
             "file_count": len(payload_files),
             "total_bytes": total_bytes,
             "exe_count": sum(1 for item in payload_files if item.lower().endswith(".exe")),
+            "tree_sha256": tree_digest.hexdigest(),
+        },
+        "provenance": {
+            "complete": provenance_complete,
+            "distribution_files": len(claimed),
+            "non_distribution_categories": {
+                key: categories[key]["file_count"] for key in sorted(categories)
+            },
+            "unrecorded_site_packages_files": violations["unrecorded_site_packages_files"],
+            "first_party_version_mismatch": first_party_mismatch,
         },
         "interpreter": interpreter,
         "distributions": distributions,
@@ -1072,6 +1122,7 @@ def build_inventory(
         "integrity": {
             "missing_pyc": missing_pyc,
             "missing_console_scripts": missing_console_scripts,
+            "missing_optional_extensions": missing_optional_extensions,
             "missing_other": missing_other,
             "outside_site_packages": sorted(
                 outside_site_packages, key=lambda item: (item["distribution"], item["entry"])
@@ -1236,6 +1287,10 @@ def render_markdown(report: dict) -> str:
     integrity = report["integrity"]
     lines.append(f"- Missing declared .pyc files: {integrity['missing_pyc']}")
     lines.append(f"- Missing declared console scripts: {integrity['missing_console_scripts']}")
+    lines.append(
+        "- Missing optional compiled extensions (pure-Python fallback present): "
+        + str(integrity["missing_optional_extensions"])
+    )
     lines.append(f"- Missing declared files (other): {integrity['missing_other']}")
     lines.append(
         "- RECORD entries outside site-packages but inside the payload: "
@@ -1320,7 +1375,11 @@ def render_markdown(report: dict) -> str:
     lines.append("- RECORD file lists are metadata claims; they do not prove import reachability.")
     lines.append("- The tool does not verify Authenticode signatures.")
     lines.append("- Licence values are copied from package metadata, not audited.")
-    lines.append("- This describes the 0.8.0 payload only; it is not a 1.0.0 artifact.")
+    lines.append(
+        "- This describes only the payload at the path above for project version "
+        + declared["project_version"]
+        + "."
+    )
     lines.append("")
     return "\n".join(lines)
 

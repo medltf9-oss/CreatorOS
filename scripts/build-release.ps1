@@ -166,13 +166,57 @@ $prerequisites = Join-Path $repo 'app\backend\src\creatoros\resources\prerequisi
 $sbomPythonScript = Join-Path $repo 'scripts\generate_sbom.py'
 $sourceSbomPath = Join-Path $releaseDir 'sbom-source.cdx.json'
 $prereqSbomPath = Join-Path $releaseDir 'sbom-prerequisites.cdx.json'
+$payloadDir = Join-Path $releaseDir 'win-unpacked\resources\backend'
+Assert-Exists $payloadDir 'packaged backend payload'
+$bundlePython = Join-Path $payloadDir 'python.exe'
+$metadataScript = Join-Path $repo 'scripts\payload_metadata.py'
 $sbomPath = Join-Path $releaseDir 'sbom.cdx.json'
-& $sbomPython $sbomPythonScript --output $sourceSbomPath --repo-root $repo --version $desktopVersion --profile source --check
+$sourceTimestamp = (& git -C $repo log -1 --format=%cI).Trim()
+if (-not $sourceTimestamp) { throw 'cannot read the source commit timestamp for a reproducible source SBOM' }
+& $sbomPython $sbomPythonScript --output $sourceSbomPath --repo-root $repo --version $desktopVersion --profile source --timestamp $sourceTimestamp --check
 if ($LASTEXITCODE -ne 0) { throw 'source SBOM generation failed' }
-& $sbomPython $sbomPythonScript --output $prereqSbomPath --repo-root $repo --version $desktopVersion --profile prerequisites --prerequisites $prerequisites --check
+& $sbomPython $sbomPythonScript --output $prereqSbomPath --repo-root $repo --version $desktopVersion --profile prerequisites --prerequisites $prerequisites --timestamp $sourceTimestamp --check
 if ($LASTEXITCODE -ne 0) { throw 'prerequisite SBOM generation failed' }
-& $sbomPython $sbomPythonScript --output $sbomPath --repo-root $repo --version $desktopVersion --profile artifact --prerequisites $prerequisites --artifact $setup --check
+& $sbomPython $sbomPythonScript --output $sbomPath --repo-root $repo --version $desktopVersion --profile artifact --prerequisites $prerequisites --artifact $setup --payload $payloadDir --check
 if ($LASTEXITCODE -ne 0) { throw 'artifact SBOM generation failed' }
+
+# --- 8. packaged runtime guard ----------------------------------------------------------------
+# Independent of the generator: walk every payload file, verify RECORD hashes and sizes, reject
+# development-only or unowned files, and compare the shipped distributions with the artifact SBOM.
+Write-Step 'runtime: packaged payload inventory'
+$inventoryScript = Join-Path $repo 'scripts\runtime-inventory.py'
+$inventoryJson = Join-Path $releaseDir 'runtime-inventory.json'
+$inventoryMarkdown = Join-Path $releaseDir 'runtime-inventory.md'
+& $sbomPython $inventoryScript --payload $payloadDir --repo-root $repo --pyproject (Join-Path $repo 'app\backend\pyproject.toml') --sbom $sbomPath --json-out $inventoryJson --markdown-out $inventoryMarkdown
+if ($LASTEXITCODE -ne 0) { throw "packaged runtime inventory failed; see $inventoryMarkdown" }
+$inventory = Get-Content -LiteralPath $inventoryJson -Raw | ConvertFrom-Json
+$sbomDocument = Get-Content -LiteralPath $sbomPath -Raw | ConvertFrom-Json
+$sbomTree = ($sbomDocument.metadata.component.properties | Where-Object { $_.name -eq 'creatoros:payload-tree-sha256' }).value
+if (-not $sbomTree) { throw 'artifact SBOM does not bind the payload tree hash' }
+if ($inventory.payload.tree_sha256 -ne $sbomTree) {
+    throw "payload tree hash disagreement: inventory $($inventory.payload.tree_sha256), SBOM $sbomTree"
+}
+if ([int]$inventory.payload.file_count -ne [int]($sbomDocument.metadata.component.properties | Where-Object { $_.name -eq 'creatoros:payload-files' }).value) {
+    throw 'payload file count disagreement between inventory and artifact SBOM'
+}
+$sourceSbomDocument = Get-Content -LiteralPath $sourceSbomPath -Raw | ConvertFrom-Json
+$sourcePypi = @($sourceSbomDocument.components | Where-Object { $_.purl -like 'pkg:pypi/*' } | ForEach-Object { $_.purl })
+$artifactPypi = @($sbomDocument.components | Where-Object { $_.purl -like 'pkg:pypi/*' } | ForEach-Object { $_.purl })
+$pypiDifference = Compare-Object -ReferenceObject $sourcePypi -DifferenceObject $artifactPypi
+if ($pypiDifference) {
+    throw "source/artifact Python component mismatch: $($pypiDifference | Out-String)"
+}
+foreach ($name in @('creatoros-backend', 'creatoros-desktop')) {
+    $sourceApp = $sourceSbomDocument.components | Where-Object { $_.name -eq $name } | Select-Object -First 1
+    $artifactApp = $sbomDocument.components | Where-Object { $_.name -eq $name } | Select-Object -First 1
+    if (-not $sourceApp -or -not $artifactApp) { throw "$name is missing from a SBOM" }
+    if ($sourceApp.version -ne $artifactApp.version) {
+        throw "$name version mismatch: source $($sourceApp.version), artifact $($artifactApp.version)"
+    }
+}
+& $bundlePython -B $metadataScript --check --payload $payloadDir --project (Join-Path $repo 'app\backend')
+if ($LASTEXITCODE -ne 0) { throw 'packaged first-party metadata verification failed' }
+Write-Host '  SBOM source/artifact Python sets and payload metadata agree' -ForegroundColor Green
 Write-Step 'done'
 Write-Host "Installer: $setup"
 Write-Host "Verify with: powershell -ExecutionPolicy Bypass -File scripts\verify-install.ps1"

@@ -47,6 +47,7 @@ if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
 }
 
 $backend = Join-Path $repo 'app\backend'
+$projectVersion = ((Select-String -Path (Join-Path $backend 'pyproject.toml') -Pattern '^version\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value)
 $venvPython = Join-Path $backend '.venv\Scripts\python.exe'
 $sitePackages = Join-Path $backend '.venv\Lib\site-packages'
 
@@ -54,6 +55,8 @@ function Write-Step($message) { Write-Host "==> $message" -ForegroundColor Cyan 
 
 if (-not (Test-Path $venvPython)) { throw "backend virtualenv python not found: $venvPython" }
 if (-not (Test-Path $sitePackages)) { throw "backend site-packages not found: $sitePackages" }
+& $venvPython (Join-Path $scriptDir 'backend_lock.py') --check
+if ($LASTEXITCODE -ne 0) { throw 'the backend environment does not match requirements-runtime.lock' }
 
 Write-Step 'locating the interpreter that owns the virtualenv'
 $basePrefix = & $venvPython -c "import sys; print(sys.base_prefix)"
@@ -113,7 +116,16 @@ New-Item -ItemType Directory -Path $bundleSite -Force | Out-Null
 Copy-Item (Join-Path $sitePackages '*') -Destination $bundleSite -Recurse -Force
 # Editable-install hooks point at this machine's source tree and must never ship.
 Get-ChildItem $bundleSite -Filter '__editable__*' -ErrorAction SilentlyContinue | Remove-Item -Force
+# Bytecode caches belong to the developer machine; Smart App Control may also rename binaries it
+# blocked to *.sacblocked. Neither name is in a wheel RECORD, so neither may ship.
+Get-ChildItem $bundleSite -Recurse -Directory -Filter '__pycache__' -ErrorAction SilentlyContinue |
+    Remove-Item -Recurse -Force
+Get-ChildItem $bundleSite -Recurse -File -Filter '*.sacblocked' -ErrorAction SilentlyContinue |
+    Remove-Item -Force
 Remove-Item (Join-Path $bundleSite 'a1_coverage.pth') -ErrorAction SilentlyContinue
+# CPython's base Lib/site-packages carries this placeholder for pip installs. It belongs to no
+# distribution and nothing imports it, so it is removed rather than shipped unowned.
+Remove-Item (Join-Path $bundleSite 'README.txt') -ErrorAction SilentlyContinue
 
 # The virtualenv is a developer environment. Copying it wholesale ships pytest, coverage, ruff and
 # PyInstaller (including the four unsigned bootloader .exe files) into the product unless they are
@@ -181,9 +193,28 @@ foreach ($dist in $devDistributions.Keys) {
 }
 Write-Host "    pruned $removed development-only entries"
 
+# The virtualenv can contain packages that are neither development tooling nor runtime
+# dependencies. The lock is authoritative: replay and remove every other distribution, then refuse
+# to continue if any site-packages file is still unowned.
+Write-Step 'pruning packages outside the runtime lock'
+& $venvPython (Join-Path $scriptDir 'payload_prune.py') --payload $OutputRoot --lock (Join-Path $backend 'requirements-runtime.lock')
+if ($LASTEXITCODE -ne 0) { throw 'payload does not match the runtime lock after pruning' }
+
 Write-Step 'copying the creatoros package'
 Copy-Item (Join-Path $backend 'src\creatoros') -Destination $bundleSite -Recurse -Force
 Get-ChildItem $bundleSite -Recurse -Directory -Filter '__pycache__' | Remove-Item -Recurse -Force
+
+# The virtualenv may hold an editable install from an older release; its dist-info describes the
+# developer machine, not this payload. Remove it, then write canonical metadata at the project
+# version and hash the files actually shipped.
+Get-ChildItem $bundleSite -Directory -Filter 'creatoros_backend-*.dist-info' -ErrorAction SilentlyContinue |
+    Remove-Item -Recurse -Force
+$metadataScript = Join-Path $scriptDir 'payload_metadata.py'
+$bundlePython = Join-Path $OutputRoot 'python.exe'
+& $bundlePython -B $metadataScript --payload $OutputRoot --project $backend --version $projectVersion
+if ($LASTEXITCODE -ne 0) { throw 'first-party payload metadata generation failed' }
+& $bundlePython -B $metadataScript --check --payload $OutputRoot --project $backend
+if ($LASTEXITCODE -ne 0) { throw 'first-party payload metadata verification failed' }
 
 Write-Step 'copying the migration environment'
 Copy-Item (Join-Path $backend 'alembic.ini') -Destination $OutputRoot
@@ -193,6 +224,27 @@ Get-ChildItem (Join-Path $OutputRoot 'migrations') -Recurse -Directory -Filter '
 $bundleExe = Join-Path $OutputRoot 'python.exe'
 $size = [math]::Round(((Get-ChildItem $OutputRoot -Recurse -File | Measure-Object Length -Sum).Sum / 1MB), 1)
 Write-Host "    bundle: $OutputRoot ($size MB)"
+
+function Invoke-BundlePython {
+    param([string[]]$Arguments, [int]$TimeoutSeconds = 120)
+    $stamp = [guid]::NewGuid().ToString('N')
+    $stdoutPath = Join-Path $sandbox "$stamp.out"
+    $stderrPath = Join-Path $sandbox "$stamp.err"
+    $proc = Start-Process -FilePath $bundleExe -ArgumentList $Arguments `
+        -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath `
+        -PassThru -WindowStyle Hidden
+    try {
+        if (-not $proc.WaitForExit($TimeoutSeconds * 1000)) {
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            throw "bundled interpreter timed out after $TimeoutSeconds s: $($Arguments -join ' ')"
+        }
+        $stdout = if (Test-Path $stdoutPath) { Get-Content $stdoutPath -Raw } else { '' }
+        $stderr = if (Test-Path $stderrPath) { Get-Content $stderrPath -Raw } else { '' }
+        return [pscustomobject]@{ ExitCode = $proc.ExitCode; StdOut = $stdout; StdErr = $stderr }
+    } finally {
+        Remove-Item $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+    }
+}
 
 if (-not $SkipVerify) {
     Write-Step 'verifying the bundle on an empty data root'
@@ -207,13 +259,15 @@ if (-not $SkipVerify) {
     $env:TMP = $env:TEMP
     $env:CREATOROS_DISABLE_AI = '1'
     try {
-        $info = & $bundleExe -m creatoros version 2>&1 | Out-String
-        Write-Host ($info.Trim())
-        if ($LASTEXITCODE -ne 0) { throw "bundled interpreter could not run 'creatoros version'" }
+        $created = Invoke-BundlePython -Arguments @('-m', 'creatoros', 'version') -TimeoutSeconds 60
+        Write-Host ($created.StdOut.Trim())
+        if ($created.ExitCode -ne 0) { throw "bundled interpreter could not run 'creatoros version':`n$($created.StdErr)" }
 
-        $migrated = & $bundleExe -m creatoros migrate 2>&1 | Out-String
-        if ($LASTEXITCODE -ne 0) { throw "bundled interpreter could not migrate an empty data root:`n$migrated" }
-        $parsed = (& $bundleExe -m creatoros version --json 2>&1 | Out-String) | ConvertFrom-Json
+        $migrated = Invoke-BundlePython -Arguments @('-m', 'creatoros', 'migrate') -TimeoutSeconds 180
+        if ($migrated.ExitCode -ne 0) { throw "bundled interpreter could not migrate an empty data root:`n$($migrated.StdErr)" }
+        $versioned = Invoke-BundlePython -Arguments @('-m', 'creatoros', 'version', '--json') -TimeoutSeconds 60
+        if ($versioned.ExitCode -ne 0) { throw "bundled interpreter could not report its version:`n$($versioned.StdErr)" }
+        $parsed = $versioned.StdOut | ConvertFrom-Json
         if (-not $parsed.revision) { throw "no migration revision after migrate" }
         if ($parsed.revision -ne $parsed.head) { throw "revision $($parsed.revision) is not head $($parsed.head)" }
         Write-Host "    migrated (empty) -> $($parsed.revision)"

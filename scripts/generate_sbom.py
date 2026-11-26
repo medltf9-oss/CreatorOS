@@ -49,6 +49,7 @@ Usage
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import importlib.metadata
 import json
@@ -71,6 +72,7 @@ GENERATOR_VERSION = '1.0.0'
 SERIAL_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, 'https://creatoros.dev/sbom/cyclonedx')
 PACKAGE_JSON_PATH = Path('app') / 'desktop' / 'package.json'
 LOCKFILE_PATH = Path('app') / 'desktop' / 'pnpm-lock.yaml'
+NODE_LICENCES_PATH = Path('app') / 'desktop' / 'third-party-licenses.json'
 PYPROJECT_PATH = Path('app') / 'backend' / 'pyproject.toml'
 VENV_PATH = Path('app') / 'backend' / '.venv'
 FFMPEG_DIR = Path('tools') / 'ffmpeg' / 'bin'
@@ -379,27 +381,19 @@ def _metadata_licence(metadata: importlib.metadata.Metadata) -> dict[str, Any] |
     return None
 
 
-def _node_licence(repo_root: Path, name: str) -> tuple[dict[str, Any] | None, str]:
-    node_modules = (repo_root / 'app' / 'desktop' / 'node_modules').resolve()
-    package_json = (node_modules / Path(*name.split('/')) / 'package.json').resolve()
-    if not package_json.is_relative_to(node_modules) or not package_json.is_file():
-        return None, ''
+def _read_node_licences(repo_root: Path) -> dict[str, dict[str, str]]:
+    """Read the committed Node licence manifest (source SBOMs must not need node_modules)."""
+    path = repo_root / NODE_LICENCES_PATH
+    if not path.is_file():
+        raise SbomError(f'missing required Node licence manifest: {path}')
     try:
-        package = json.loads(package_json.read_text(encoding='utf-8-sig'))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return None, ''
-    if not isinstance(package, dict):
-        return None, ''
-    raw = package.get('license')
-    if isinstance(raw, list) and raw:
-        raw = raw[0]
-    if isinstance(raw, dict):
-        raw = raw.get('type')
-    if not isinstance(raw, str) or not raw.strip():
-        return None, ''
-    entry = spdx_licence_entry(raw)
-    source = f'app/desktop/node_modules/{name}/package.json'
-    return entry, source
+        document = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SbomError(f'cannot read Node licence manifest {path}: {exc}') from exc
+    packages = document.get('packages') if isinstance(document, dict) else None
+    if not isinstance(packages, dict):
+        raise SbomError(f'Node licence manifest {path} has no packages mapping')
+    return packages
 
 
 def collect_node_components(repo_root: Path) -> tuple[list[dict[str, Any]], list[str]]:
@@ -415,6 +409,7 @@ def collect_node_components(repo_root: Path) -> tuple[list[dict[str, Any]], list
     snapshots: set[str] = data['snapshots']
     components: list[dict[str, Any]] = []
     errors: list[str] = []
+    node_licences = _read_node_licences(repo_root)
     for group, scope in (('dependencies', 'required'), ('devDependencies', 'excluded')):
         entries = importer.get(group, {})
         for name in sorted(entries):
@@ -451,7 +446,25 @@ def collect_node_components(repo_root: Path) -> tuple[list[dict[str, Any]], list
                     'name': 'creatoros:scope-reason',
                     'value': 'build-time only; dev dependency, not shipped in the packaged application',
                 })
-            licence, licence_source = _node_licence(repo_root, name)
+            declared = node_licences.get(name)
+            licence = None
+            licence_source = ''
+            if not isinstance(declared, dict):
+                message = f'no committed licence entry for {name}@{version}'
+                errors.append(message)
+                properties.append({'name': 'creatoros:collection-error', 'value': message})
+            elif str(declared.get('version')) != version:
+                message = (
+                    f'committed licence entry has {name} {declared.get("version")}, '
+                    f'but pnpm-lock resolves {version}'
+                )
+                errors.append(message)
+                properties.append({'name': 'creatoros:collection-error', 'value': message})
+            else:
+                raw = declared.get('license')
+                if isinstance(raw, str) and raw.strip():
+                    licence = spdx_licence_entry(raw)
+                    licence_source = NODE_LICENCES_PATH.as_posix()
             component: dict[str, Any] = {
                 'type': 'library',
                 'bom-ref': purl,
@@ -542,8 +555,257 @@ def _python_components_from_specifiers(
     return components, errors
 
 
-def collect_python_components(
-    repo_root: Path, pyproject: dict[str, Any]
+LOCK_PATH = Path('app') / 'backend' / 'requirements-runtime.lock'
+PAYLOAD_SITE_PACKAGES = Path('Lib') / 'site-packages'
+PAYLOAD_DEV_DISTRIBUTIONS = frozenset({
+    'pytest', 'pytest-asyncio', 'pytest-cov', 'coverage', 'pyinstaller',
+    'pyinstaller-hooks-contrib', 'altgraph', 'pywin32-ctypes', 'pefile', 'ruff', 'respx',
+    'pip', 'setuptools', 'pluggy', 'iniconfig', 'pygments', 'packaging',
+})
+
+
+def read_runtime_lock(repo_root: Path) -> dict[str, str]:
+    """Return the committed runtime pins; the lock is the source profile's only Python input."""
+    path = repo_root / LOCK_PATH
+    if not path.is_file():
+        raise SbomError(f'missing runtime lock: {path}')
+    versions: dict[str, str] = {}
+    for number, raw in enumerate(_read_text(path, 'backend runtime lock').splitlines(), start=1):
+        line = raw.strip()
+        if not line or line.startswith('#'):
+            continue
+        match = re.fullmatch(r'([A-Za-z0-9][A-Za-z0-9_.-]*)==(\S+)', line)
+        if match is None:
+            raise SbomError(f'{path} line {number} is not a name==version pin: {raw!r}')
+        name = _canonical_name(match.group(1))
+        if name in versions:
+            raise SbomError(f'{path} pins {name} more than once')
+        versions[name] = match.group(2)
+    if not versions:
+        raise SbomError(f'{path} contains no pins')
+    return versions
+
+
+def collect_locked_python_components(repo_root: Path) -> tuple[list[dict[str, Any]], list[str]]:
+    """Build source-profile Python components from the committed lock, never from a venv."""
+    versions = read_runtime_lock(repo_root)
+    components: list[dict[str, Any]] = []
+    for name, version in sorted(versions.items()):
+        properties = [
+            {'name': 'creatoros:source', 'value': LOCK_PATH.as_posix()},
+            {'name': 'creatoros:version-source', 'value': 'backend-lock'},
+        ]
+        components.append({
+            'type': 'library',
+            'bom-ref': _pypi_purl(name, version),
+            'name': name,
+            'version': version,
+            'scope': 'required',
+            'purl': _pypi_purl(name, version),
+            'properties': _sorted_properties(properties),
+        })
+    return components, []
+
+
+def _payload_tree(payload: Path) -> tuple[str, int, int]:
+    """Return (tree SHA-256, file count, byte count) over sorted relative paths and file hashes."""
+    digest = hashlib.sha256()
+    count = 0
+    total = 0
+    # Sort by the POSIX relative path string. Sorting Path objects is case-insensitive on Windows,
+    # which would make the same payload hash differently from the inventory walker.
+    relatives = sorted(
+        item.relative_to(payload).as_posix() for item in payload.rglob('*') if item.is_file()
+    )
+    for relative in relatives:
+        path = payload / relative
+        file_hash = _sha256_file(path)
+        digest.update(relative.encode('utf-8') + b'\0' + file_hash.encode('ascii') + b'\n')
+        count += 1
+        total += path.stat().st_size
+    if count == 0:
+        raise SbomError(f'payload is empty: {payload}')
+    return digest.hexdigest(), count, total
+
+
+def _record_rows(path: Path) -> list[tuple[str, str, str]]:
+    import csv
+    try:
+        with path.open('r', encoding='utf-8', newline='') as handle:
+            rows = list(csv.reader(handle))
+    except OSError as exc:
+        raise SbomError(f'cannot read RECORD {path}: {exc}') from exc
+    entries: list[tuple[str, str, str]] = []
+    for row in rows:
+        if not row:
+            continue
+        if len(row) < 3:
+            raise SbomError(f'RECORD {path} has a malformed row: {row!r}')
+        entries.append((row[0], row[1].strip(), row[2].strip()))
+    return entries
+
+
+def _record_digest_matches(path: Path, recorded: str) -> bool:
+    algorithm, _, encoded = recorded.partition('=')
+    if algorithm != 'sha256' or not encoded:
+        return False
+    expected = base64.urlsafe_b64encode(hashlib.sha256(path.read_bytes()).digest()).rstrip(b'=')
+    return expected.decode('ascii') == encoded
+
+
+def _payload_metadata(dist_info: Path) -> tuple[str, str, Any]:
+    import email.parser
+    path = dist_info / 'METADATA'
+    if not path.is_file():
+        raise SbomError(f'{dist_info.name} has no METADATA')
+    message = email.parser.Parser().parsestr(_read_text(path, f'{dist_info.name} METADATA'))
+    name = (message.get('Name') or '').strip()
+    version = (message.get('Version') or '').strip()
+    if not name or not version:
+        raise SbomError(f'{dist_info.name} METADATA lacks Name or Version')
+    return name, version, message
+
+
+def _payload_licence(message: Any) -> dict[str, Any] | None:
+    expression = (message.get('License-Expression') or '').strip()
+    if expression:
+        return spdx_licence_entry(expression)
+    field = (message.get('License') or '').strip()
+    if field and field.upper() not in {'UNKNOWN', 'NONE'}:
+        return spdx_licence_entry(field) or {'license': {'name': field}}
+    classifiers = message.get_all('Classifier') or []
+    for classifier in classifiers:
+        marker = 'License ::'
+        if marker in classifier:
+            value = classifier.split('License ::', 1)[1].strip(' :')
+            return spdx_licence_entry(value) or {'license': {'name': value}}
+    return None
+
+
+def collect_payload_components(
+    repo_root: Path, payload: Path, pyproject: dict[str, Any]
+) -> tuple[list[dict[str, Any]], list[str], str, int, int]:
+    """Derive artifact components from the packaged payload and verify every RECORD entry."""
+    if not payload.is_dir():
+        raise SbomError(f'--payload is not a directory: {payload}')
+    site_packages = payload / PAYLOAD_SITE_PACKAGES
+    if not site_packages.is_dir():
+        raise SbomError(f'payload has no {PAYLOAD_SITE_PACKAGES.as_posix()}: {payload}')
+    lock = read_runtime_lock(repo_root)
+    project = pyproject.get('project') or {}
+    project_version = str(project.get('version') or '')
+    claimed: set[str] = set()
+    components: list[dict[str, Any]] = []
+    errors: list[str] = []
+    first_party: tuple[str, str] | None = None
+    optional_total = 0
+    external_total = 0
+    seen: dict[str, str] = {}
+    for dist_info in sorted(site_packages.glob('*.dist-info')):
+        if not dist_info.is_dir():
+            continue
+        name, version, message = _payload_metadata(dist_info)
+        canonical = _canonical_name(name)
+        if canonical in seen:
+            raise SbomError(f'payload has duplicate distributions for {canonical}')
+        seen[canonical] = version
+        if canonical in PAYLOAD_DEV_DISTRIBUTIONS:
+            raise SbomError(f'development-only distribution {name} {version} is in the payload')
+        record_path = dist_info / 'RECORD'
+        if not record_path.is_file():
+            raise SbomError(f'{dist_info.name} has no RECORD')
+        entries = _record_rows(record_path)
+        present = 0
+        optional_extensions = 0
+        external_scripts = 0
+        for entry, recorded_hash, recorded_size in entries:
+            relative = entry.replace('\\', '/')
+            if re.match(r'^(\.\./)+Scripts/', relative):
+                external_scripts += 1
+                continue
+            if not relative or relative.startswith('/') or '..' in relative.split('/'):
+                raise SbomError(f'{dist_info.name} RECORD entry is unsafe: {entry!r}')
+            target = (site_packages / Path(relative)).resolve()
+            if not target.is_relative_to(payload.resolve()):
+                raise SbomError(f'{dist_info.name} RECORD entry leaves the payload: {relative}')
+            claimed.add(target.relative_to(payload.resolve()).as_posix())
+            if not target.is_file():
+                if relative.endswith('.pyc'):
+                    continue
+                fallback = re.sub(r'\.(?:cp\d+-[^.]+\.)?pyd$', '.py', str(target))
+                if relative.endswith('.pyd') and Path(fallback).is_file():
+                    optional_extensions += 1
+                    continue
+                raise SbomError(f'{dist_info.name} RECORD entry is missing: {relative}')
+            present += 1
+            if recorded_size and target.stat().st_size != int(recorded_size):
+                raise SbomError(f'{dist_info.name} RECORD size mismatch: {relative}')
+            if recorded_hash and not _record_digest_matches(target, recorded_hash):
+                raise SbomError(f'{dist_info.name} RECORD hash mismatch: {relative}')
+        optional_total += optional_extensions
+        external_total += external_scripts
+        if canonical in SELF_DISTRIBUTIONS:
+            first_party = (name, version)
+            continue
+        if canonical not in lock:
+            raise SbomError(f'{name} {version} is in the payload but not in {LOCK_PATH.as_posix()}')
+        if lock[canonical] != version:
+            raise SbomError(
+                f'{name} payload version {version} does not match runtime lock {lock[canonical]}'
+            )
+        purl = _pypi_purl(canonical, version)
+        properties = [
+            {'name': 'creatoros:source', 'value': 'packaged payload'},
+            {'name': 'creatoros:version-source', 'value': 'payload-dist-info'},
+            {'name': 'creatoros:dist-info', 'value': dist_info.name},
+            {'name': 'creatoros:record-files', 'value': str(present)},
+        ]
+        if optional_extensions:
+            properties.append(
+                {'name': 'creatoros:optional-compiled-extensions-absent', 'value': str(optional_extensions)}
+            )
+            properties.append(
+                {
+                    'name': 'creatoros:optional-compiled-extension-reason',
+                    'value': 'compiled accelerator absent; the distribution ships a pure-Python module of the same name',
+                }
+            )
+        if external_scripts:
+            properties.append(
+                {'name': 'creatoros:external-console-scripts-not-shipped', 'value': str(external_scripts)}
+            )
+        component: dict[str, Any] = {
+            'type': 'library',
+            'bom-ref': purl,
+            'name': canonical,
+            'version': version,
+            'scope': 'required',
+            'purl': purl,
+        }
+        licence = _payload_licence(message)
+        if licence is not None:
+            component['licenses'] = [licence]
+            properties.append({'name': 'creatoros:license-source', 'value': 'payload METADATA'})
+        else:
+            properties.append({'name': 'creatoros:license-status', 'value': 'unknown'})
+        component['properties'] = _sorted_properties(properties)
+        components.append(component)
+    if first_party is None:
+        raise SbomError('payload has no first-party creatoros-backend dist-info')
+    if first_party[1] != project_version:
+        raise SbomError(
+            f'payload first-party version {first_party[1]} does not match pyproject {project_version}'
+        )
+    for path in sorted(item for item in site_packages.rglob('*') if item.is_file()):
+        if any(part.endswith('.dist-info') for part in path.relative_to(site_packages).parts):
+            continue
+        relative = path.relative_to(payload).as_posix()
+        if relative not in claimed:
+            raise SbomError(f'payload file is not owned by any RECORD: {relative}')
+    return components, errors, first_party[1], optional_total, external_total
+
+
+def collect_python_components(    repo_root: Path, pyproject: dict[str, Any]
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Return Python components from the tested venv, or from pyproject specifiers as a fallback."""
     site_packages = _venv_site_packages(repo_root)
@@ -1006,6 +1268,7 @@ def collect_components(
     repo_root: Path,
     prerequisites: Path | None = None,
     profile: str = 'all',
+    payload: Path | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Collect components for one SBOM profile and return (components, collection errors).
 
@@ -1050,14 +1313,59 @@ def collect_components(
         errors.extend(ollama_errors)
         return components, errors
     node_components, node_errors = collect_node_components(repo_root)
-    python_components, python_errors = collect_python_components(repo_root, pyproject)
     components.extend(node_components)
-    components.extend(python_components)
     errors.extend(node_errors)
-    errors.extend(python_errors)
     if profile == 'source':
+        # The committed lock is the only Python input: no venv, no site-packages, no network.
+        locked_components, locked_errors = collect_locked_python_components(repo_root)
+        components.extend(locked_components)
+        errors.extend(locked_errors)
         return components, errors
     if profile == 'artifact':
+        if payload is None:
+            raise SbomError('profile artifact requires --payload (the packaged backend directory)')
+        (
+            payload_components,
+            payload_errors,
+            first_party_version,
+            optional_extensions,
+            external_scripts,
+        ) = collect_payload_components(repo_root, payload, pyproject)
+        errors.extend(payload_errors)
+        for component in components:
+            if component['name'] == 'creatoros-backend':
+                component['version'] = first_party_version
+                component['bom-ref'] = f'creatoros-backend@{first_party_version}'
+                extra_properties = [
+                    {'name': 'creatoros:version-source', 'value': 'payload-dist-info'},
+                ]
+                if optional_extensions:
+                    extra_properties.append(
+                        {
+                            'name': 'creatoros:optional-compiled-extensions-absent',
+                            'value': str(optional_extensions),
+                        }
+                    )
+                    extra_properties.append(
+                        {
+                            'name': 'creatoros:optional-compiled-extension-reason',
+                            'value': (
+                                'compiled accelerator absent; the distribution ships a pure-Python '
+                                'module of the same name'
+                            ),
+                        }
+                    )
+                if external_scripts:
+                    extra_properties.append(
+                        {
+                            'name': 'creatoros:external-console-scripts-not-shipped',
+                            'value': str(external_scripts),
+                        }
+                    )
+                component['properties'] = _sorted_properties(
+                    list(component['properties']) + extra_properties
+                )
+        components.extend(payload_components)
         # The installer does not carry FFmpeg or Ollama. The artifact document binds the bytes it
         # does carry and describes the external prerequisites from the audit record, exactly as the
         # prerequisite document does, so the source inventory is a subset of the artifact inventory.
@@ -1070,6 +1378,9 @@ def collect_components(
         errors.extend(ffmpeg_errors)
         errors.extend(prerequisite_errors)
         return components, errors
+    python_components, python_errors = collect_python_components(repo_root, pyproject)
+    components.extend(python_components)
+    errors.extend(python_errors)
     bundled_components, bundled_errors = collect_bundled_components(repo_root)
     prerequisite_components, prerequisite_errors = collect_prerequisite_components(
         repo_root, prerequisites
@@ -1143,6 +1454,7 @@ def build_document(
     timestamp: str | None = None,
     serial: str | None = None,
     artifact: tuple[str, str, int] | None = None,
+    payload: tuple[str, int, int] | None = None,
 ) -> dict[str, Any]:
     """Build the CycloneDX 1.5 document; components are sorted by (type, name, version)."""
     ordered = sorted(
@@ -1172,6 +1484,17 @@ def build_document(
         product_properties.append({'name': 'creatoros:artifact-name', 'value': artifact_name})
         product_properties.append(
             {'name': 'creatoros:artifact-size-bytes', 'value': str(artifact_size)}
+        )
+    if payload is not None:
+        payload_hash, payload_files, payload_bytes = payload
+        product_properties.append(
+            {'name': 'creatoros:payload-tree-sha256', 'value': payload_hash}
+        )
+        product_properties.append(
+            {'name': 'creatoros:payload-files', 'value': str(payload_files)}
+        )
+        product_properties.append(
+            {'name': 'creatoros:payload-bytes', 'value': str(payload_bytes)}
         )
     product_component['properties'] = _sorted_properties(product_properties)
     document: dict[str, Any] = {
@@ -1345,6 +1668,7 @@ def generate_sbom(
     timestamp: str | None = None,
     serial: str | None = None,
     artifact: Path | None = None,
+    payload: Path | None = None,
     profile: str = 'all',
 ) -> dict[str, Any]:
     """Collect, build and write the SBOM; returns the document that was written."""
@@ -1356,8 +1680,11 @@ def generate_sbom(
     product_version = version.strip() if version is not None else desktop_version
     if not product_version:
         raise SbomError('--version must not be empty')
-    components, errors = collect_components(repo_root, prerequisites, profile=profile)
+    components, errors = collect_components(
+        repo_root, prerequisites, profile=profile, payload=payload
+    )
     binding = _artifact_binding(artifact) if artifact is not None else None
+    payload_summary = _payload_tree(payload) if payload is not None else None
     document = build_document(
         components,
         product_version,
@@ -1367,6 +1694,7 @@ def generate_sbom(
         timestamp=timestamp,
         serial=serial,
         artifact=binding,
+        payload=payload_summary,
     )
     write_document(document, output)
     return document
@@ -1413,6 +1741,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=None,
         help='installer file whose SHA-256 and size are recorded on metadata.component',
     )
+    parser.add_argument(
+        '--payload',
+        type=Path,
+        default=None,
+        help='packaged backend directory (required for profile artifact; sourced from the installed payload)',
+    )
     parser.add_argument('--timestamp', default=None, help='ISO 8601 timestamp instead of now')
     parser.add_argument('--serial', default=None, help='UUID to use as the bom serial number')
     args = parser.parse_args(argv)
@@ -1425,6 +1759,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             timestamp=args.timestamp,
             serial=args.serial,
             artifact=args.artifact,
+            payload=args.payload,
             profile=args.profile,
         )
     except SbomError as exc:

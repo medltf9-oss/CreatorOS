@@ -80,7 +80,10 @@ else {
     try {
       py -3.12 -m venv .venv
       & .\.venv\Scripts\python.exe -m pip install --upgrade pip -q
-      & .\.venv\Scripts\python.exe -m pip install -e . -q
+      # The committed lock pins the exact runtime closure, so a clean clone builds the same
+      # environment as the release machine. Editable install brings only first-party code.
+      & .\.venv\Scripts\python.exe -m pip install -r requirements-runtime.lock -q
+      & .\.venv\Scripts\python.exe -m pip install --no-deps -e . -q
     } finally { Pop-Location }
   }
 }

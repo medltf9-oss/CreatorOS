@@ -77,11 +77,13 @@ function New-SbomForGate {
     if (-not $python) {
         return @{ ok = $false; detail = 'no Python interpreter: create app\backend\.venv or put python on PATH' }
     }
+    $commitTimestamp = (& git -C $repo log -1 --format=%cI).Trim()
     $arguments = @(
         (Join-Path $repo 'scripts\generate_sbom.py'),
         '--output', $Output,
         '--profile', $Profile,
         '--version', $ReleaseVersion,
+        '--timestamp', $commitTimestamp,
         '--check'
     )
     if ($Prerequisites) { $arguments += @('--prerequisites', $Prerequisites) }

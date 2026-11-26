@@ -137,6 +137,36 @@ def simple_dist(name: str, version: str, relative: str = "widget.py") -> dict:
     }
 
 
+def test_unrecorded_site_packages_file_is_fatal(tmp_path):
+    payload = make_payload(tmp_path)
+    write_dist(payload, 'widget-1.0.dist-info', simple_dist('widget', '1.0'))
+    (payload / 'Lib' / 'site-packages' / 'README.txt').write_text('placeholder', encoding='utf-8')
+    pyproject = write_pyproject(tmp_path, ('widget>=1.0',))
+    output = tmp_path / 'inventory.json'
+    result = run_inventory(payload, '--json-out', str(output), pyproject=pyproject)
+    assert result.returncode == 1
+    report = read_report(output)
+    assert report['provenance']['complete'] is False
+    paths = [item['path'] for item in report['violations']['unrecorded_site_packages_files']]
+    assert 'Lib/site-packages/README.txt' in paths
+    assert any('unrecorded site-packages' in cause for cause in report['summary']['causes'])
+
+
+def test_first_party_version_mismatch_is_fatal(tmp_path):
+    payload = make_payload(tmp_path)
+    write_dist(
+        payload,
+        'creatoros_backend-0.1.0.dist-info',
+        simple_dist('creatoros-backend', '0.1.0', 'creatoros/__init__.py'),
+    )
+    pyproject = write_pyproject(tmp_path, ('widget>=1.0',))
+    output = tmp_path / 'inventory.json'
+    result = run_inventory(payload, '--json-out', str(output), pyproject=pyproject)
+    assert result.returncode == 1
+    report = read_report(output)
+    assert report['declared_runtime_dependencies']['first_party_version_mismatch'] is not None
+    assert any('first-party version mismatch' in cause for cause in report['summary']['causes'])
+
 # ---------------------------------------------------------------------------
 # synthetic payloads
 # ---------------------------------------------------------------------------

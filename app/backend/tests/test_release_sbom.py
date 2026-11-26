@@ -8,6 +8,7 @@ Nothing here reaches the network and every file written stays under tmp_path.
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import importlib.metadata
 import importlib.util
@@ -224,44 +225,51 @@ def test_a_missing_lockfile_is_a_hard_failure(sbom, tmp_path):
         sbom.generate_sbom(repo, tmp_path / 'out.cdx.json')
 
 
-def test_python_fallback_records_specifiers_not_invented_versions(sbom, tmp_path):
+def test_source_components_come_from_the_committed_lock(sbom):
+    lock = sbom.read_runtime_lock(REPO_ROOT)
+    components, errors = sbom.collect_locked_python_components(REPO_ROOT)
+    assert errors == []
+    by_name = {component['name']: component for component in components}
+    assert set(by_name) == set(lock)
+    assert by_name['fastapi']['version'] == lock['fastapi']
+    assert _properties(by_name['fastapi'])['creatoros:version-source'] == 'backend-lock'
+    assert by_name['fastapi']['purl'] == 'pkg:pypi/fastapi@' + lock['fastapi']
+    assert 'creatoros-backend' not in by_name
+
+
+def test_node_components_need_only_the_committed_licence_manifest(sbom, tmp_path):
+    desktop = tmp_path / 'app' / 'desktop'
+    desktop.mkdir(parents=True)
+    for name in ('package.json', 'pnpm-lock.yaml', 'third-party-licenses.json'):
+        (desktop / name).write_bytes((REPO_ROOT / 'app' / 'desktop' / name).read_bytes())
+    assert not (desktop / 'node_modules').exists()
+    components, errors = sbom.collect_node_components(tmp_path)
+    assert errors == []
+    assert components
+    for component in components:
+        properties = {item['name']: item['value'] for item in component['properties']}
+        assert properties.get('creatoros:license-source') == 'app/desktop/third-party-licenses.json'
+
+def test_a_missing_runtime_lock_is_a_hard_failure(sbom, tmp_path):
     repo = tmp_path / 'repo'
     (repo / 'app' / 'backend').mkdir(parents=True)
-    pyproject = (
-        '[project]\n'
-        'name = "creatoros-backend"\n'
-        'version = "1.2.3"\n'
-        'dependencies = ["fastapi>=0.115", "tzdata>=2024.1; sys_platform == \'win32\'"]\n'
-    )
-    (repo / 'app' / 'backend' / 'pyproject.toml').write_text(pyproject, encoding='utf-8')
-    parsed = sbom.read_backend_pyproject(repo)
-    components, errors = sbom.collect_python_components(repo, parsed)
-    by_name = {component['name']: component for component in components}
-    assert by_name['fastapi']['version'] == '>=0.115'
-    assert _properties(by_name['fastapi'])['creatoros:version-source'] == 'pyspecifier'
-    assert any('venv is absent' in error for error in errors)
+    with pytest.raises(sbom.SbomError, match='missing runtime lock'):
+        sbom.read_runtime_lock(repo)
 
 
 @pytest.mark.skipif(
     not VENV_SITE_PACKAGES.is_dir(),
     reason='app/backend/.venv is absent from this checkout',
 )
-def test_python_components_match_the_installed_venv(sbom):
+def test_runtime_lock_matches_the_installed_environment(sbom):
+    lock = sbom.read_runtime_lock(REPO_ROOT)
     installed = {}
     for dist in importlib.metadata.distributions(path=[str(VENV_SITE_PACKAGES)]):
         name = dist.metadata.get('Name')
         if name:
             installed.setdefault(re.sub(r'[-_.]+', '-', name).lower(), dist.version)
-    components, _errors = sbom.collect_python_components(
-        REPO_ROOT, sbom.read_backend_pyproject(REPO_ROOT)
-    )
-    by_name = {component['name']: component for component in components}
-    assert 'fastapi' in by_name
-    assert by_name['fastapi']['version'] == installed['fastapi']
-    assert _properties(by_name['fastapi'])['creatoros:version-source'] == 'venv'
-    assert 'creatoros-backend' not in by_name
-
-
+    for name, version in lock.items():
+        assert installed.get(name) == version, name
 def test_ollama_is_only_added_from_a_prerequisites_manifest(sbom, document, tmp_path):
     assert not _by_name(document, 'ollama')
     manifest = tmp_path / 'prerequisites.json'
@@ -319,8 +327,6 @@ def test_the_shipped_prerequisites_manifest_is_what_the_generator_reads(sbom):
 
 def test_source_profile_excludes_prerequisites_and_bundled_binaries(sbom, tmp_path):
     """A source SBOM describes the checkout, not tools that may not be downloaded yet."""
-    if not (REPO_ROOT / 'app' / 'backend' / '.venv').exists():
-        pytest.skip('source resolution needs the backend virtualenv; CI installs dependencies elsewhere')
     document = sbom.generate_sbom(
         REPO_ROOT,
         tmp_path / 'source.cdx.json',
@@ -331,6 +337,10 @@ def test_source_profile_excludes_prerequisites_and_bundled_binaries(sbom, tmp_pa
     assert 'creatoros-desktop' in names
     assert 'creatoros-backend' in names
     assert 'ffmpeg' not in names and 'ffprobe' not in names
+    lock = sbom.read_runtime_lock(REPO_ROOT)
+    refs = {component['bom-ref'] for component in document['components']}
+    for name, version in lock.items():
+        assert f'pkg:pypi/{name}@{version}' in refs
     assert not [
         item for item in document.get('properties', [])
         if item.get('name') == 'creatoros:collection-error'
@@ -365,14 +375,47 @@ def test_prerequisites_profile_uses_declared_hashes_without_reading_binaries(sbo
     ]
 
 
-def test_artifact_profile_binds_the_installer_and_keeps_the_full_inventory(sbom, tmp_path):
+def _write_payload_dist(site_packages, dist_info, metadata, record_rows):
+    directory = site_packages / dist_info
+    directory.mkdir(parents=True)
+    (directory / 'METADATA').write_text('\n'.join(metadata) + '\n', encoding='utf-8')
+    (directory / 'RECORD').write_text('\n'.join(record_rows) + '\n', encoding='utf-8')
+
+
+def test_artifact_profile_binds_the_installer_and_the_real_payload(sbom, tmp_path):
     installer = tmp_path / 'CreatorOS-Setup-test.exe'
     installer.write_bytes(b'installer bytes')
+    payload = tmp_path / 'backend'
+    site_packages = payload / 'Lib' / 'site-packages'
+    site_packages.mkdir(parents=True)
+    lock = sbom.read_runtime_lock(REPO_ROOT)
+    name = 'tzdata'
+    version = lock[name]
+    package_file = f'{name}/zoneinfo/UTC'
+    (site_packages / name / 'zoneinfo').mkdir(parents=True)
+    (site_packages / package_file).write_bytes(b'UTC bytes')
+    digest = base64.urlsafe_b64encode(hashlib.sha256(b'UTC bytes').digest()).rstrip(b'=').decode()
+    _write_payload_dist(
+        site_packages,
+        f'{name}-{version}.dist-info',
+        ['Metadata-Version: 2.4', f'Name: {name}', f'Version: {version}', 'License: MIT'],
+        [f'{package_file},sha256={digest},9'],
+    )
+    first_party = 'creatoros_backend-0.8.0.dist-info'
+    (site_packages / 'creatoros').mkdir()
+    (site_packages / 'creatoros' / '__init__.py').write_text('', encoding='utf-8')
+    _write_payload_dist(
+        site_packages,
+        first_party,
+        ['Metadata-Version: 2.4', 'Name: creatoros-backend', 'Version: 0.8.0'],
+        ['creatoros/__init__.py,sha256=' + base64.urlsafe_b64encode(hashlib.sha256(b'').digest()).rstrip(b'=').decode() + ',0'],
+    )
     document = sbom.generate_sbom(
         REPO_ROOT,
         tmp_path / 'artifact.cdx.json',
         profile='artifact',
         artifact=installer,
+        payload=payload,
         timestamp='2026-11-26T00:00:00Z',
     )
     digest = hashlib.sha256(b'installer bytes').hexdigest()
@@ -380,6 +423,102 @@ def test_artifact_profile_binds_the_installer_and_keeps_the_full_inventory(sbom,
     assert {'alg': 'SHA-256', 'content': digest} in hashes
     names = {component['name'] for component in document['components']}
     assert 'creatoros-desktop' in names and 'creatoros-backend' in names
+    properties = {item['name']: item['value'] for item in document['metadata']['component']['properties']}
+    payload_files = sum(1 for item in payload.rglob('*') if item.is_file())
+    assert properties['creatoros:payload-files'] == str(payload_files)
+    assert len(properties['creatoros:payload-tree-sha256']) == 64
+    tzdata = next(component for component in document['components'] if component['name'] == name)
+    assert tzdata['version'] == version
+    assert tzdata['purl'] == f'pkg:pypi/{name}@{version}'
+    assert any(item['name'] == 'creatoros:record-files' for item in tzdata['properties'])
+
+
+def test_missing_compiled_accelerator_with_python_fallback_is_recorded(sbom, tmp_path):
+    installer = tmp_path / 'CreatorOS-Setup-test.exe'
+    installer.write_bytes(b'installer bytes')
+    payload = tmp_path / 'backend'
+    site_packages = payload / 'Lib' / 'site-packages'
+    package = site_packages / 'creatoros'
+    package.mkdir(parents=True)
+    (package / '__init__.py').write_text('', encoding='utf-8')
+    fallback_file = package / '_speed.py'
+    fallback_file.write_bytes(b'# fallback\n')
+    empty = base64.urlsafe_b64encode(hashlib.sha256(b'').digest()).rstrip(b'=').decode()
+    fallback = base64.urlsafe_b64encode(hashlib.sha256(fallback_file.read_bytes()).digest()).rstrip(b'=').decode()
+    _write_payload_dist(
+        site_packages,
+        'creatoros_backend-0.8.0.dist-info',
+        ['Metadata-Version: 2.4', 'Name: creatoros-backend', 'Version: 0.8.0'],
+        [
+            f'creatoros/__init__.py,sha256={empty},0',
+            f'creatoros/_speed.py,sha256={fallback},{fallback_file.stat().st_size}',
+            'creatoros/_speed.cp312-win_amd64.pyd,sha256=deadbeef,999',
+            '../../Scripts/creatoros.exe,sha256=deadbeef,999',
+        ],
+    )
+    document = sbom.generate_sbom(
+        REPO_ROOT,
+        tmp_path / 'artifact.cdx.json',
+        profile='artifact',
+        artifact=installer,
+        payload=payload,
+        timestamp='2026-11-26T00:00:00Z',
+    )
+    first_party = next(item for item in document['components'] if item['name'] == 'creatoros-backend')
+    properties = {item['name']: item['value'] for item in first_party['properties']}
+    assert properties['creatoros:optional-compiled-extensions-absent'] == '1'
+    assert properties['creatoros:external-console-scripts-not-shipped'] == '1'
+
+
+def test_payload_tree_hash_uses_case_sensitive_posix_order(sbom, tmp_path):
+    payload = tmp_path / 'payload'
+    payload.mkdir()
+    (payload / 'B.txt').write_text('upper', encoding='utf-8')
+    (payload / 'a.txt').write_text('lower', encoding='utf-8')
+    expected = hashlib.sha256()
+    # Byte-wise sort puts B before a; Windows Path sorting would put a before B.
+    for relative in ['B.txt', 'a.txt']:
+        content = (payload / relative).read_bytes()
+        file_hash = hashlib.sha256(content).hexdigest()
+        expected.update(relative.encode('utf-8') + b'\0' + file_hash.encode('ascii') + b'\n')
+    tree_hash, files, size = sbom._payload_tree(payload)
+    assert tree_hash == expected.hexdigest()
+    assert files == 2
+    assert size == 10
+
+def test_artifact_profile_rejects_an_unowned_payload_file(sbom, tmp_path):
+    installer = tmp_path / 'CreatorOS-Setup-test.exe'
+    installer.write_bytes(b'installer bytes')
+    payload = tmp_path / 'backend'
+    site_packages = payload / 'Lib' / 'site-packages'
+    site_packages.mkdir(parents=True)
+    (site_packages / 'README.txt').write_text('placeholder', encoding='utf-8')
+    _write_payload_dist(
+        site_packages,
+        'creatoros_backend-0.8.0.dist-info',
+        ['Metadata-Version: 2.4', 'Name: creatoros-backend', 'Version: 0.8.0'],
+        [],
+    )
+    with pytest.raises(sbom.SbomError, match='not owned by any RECORD'):
+        sbom.generate_sbom(
+            REPO_ROOT,
+            tmp_path / 'artifact.cdx.json',
+            profile='artifact',
+            artifact=installer,
+            payload=payload,
+        )
+
+
+def test_artifact_profile_requires_payload(sbom, tmp_path):
+    installer = tmp_path / 'CreatorOS-Setup-test.exe'
+    installer.write_bytes(b'installer bytes')
+    with pytest.raises(sbom.SbomError, match='requires --payload'):
+        sbom.generate_sbom(
+            REPO_ROOT,
+            tmp_path / 'artifact.cdx.json',
+            profile='artifact',
+            artifact=installer,
+        )
 
 
 def test_an_unknown_profile_is_rejected(sbom, tmp_path):
