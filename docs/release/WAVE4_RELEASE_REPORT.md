@@ -116,6 +116,7 @@ Specialist 3 probed the guard and found genuine fail-open behaviour. Fixed in `b
 | 5 | `wave4/05-installer-architecture.md` | Installer layout, NSIS, signing authority, notices, prerequisites and update-path review |
 | 6 | `wave4/06-clean-clone-ci-audit.md` | Independent clean-clone lock/gate/SBOM/CI audit; found the CI event mislabel and the uncommitted-SBOM caveat |
 | 7 | `wave4/07-gate-evidence-audit.md` | Independent matrix/doc evidence audit; found stale Wave 3 install and signature-inventory claims |
+| 8 | `wave4/08-regression-review.md` | Independent regression/document review; confirmed fail-closed guards, accepted Wave 4 engineering, and required the row-17, gate-invocation and lock-wording corrections |
 
 Reports are retained outside the repository under `D:\P\wave4\`; they are reviews, not release
 approvals.
