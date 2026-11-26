@@ -107,24 +107,22 @@ bytes.
 The Source stage is reproducible from a fresh clone after the documented bootstrap:
 
 ```powershell
-git clone https://github.com/medltf9-oss/CreatorOS.git CreatorOS-clean
+git clone --branch release/v1.0.0-readiness --single-branch -c core.autocrlf=false `
+  https://github.com/medltf9-oss/CreatorOS.git CreatorOS-clean
 cd CreatorOS-clean
-powershell -ExecutionPolicy Bypass -File scripts\bootstrap.ps1
+python scripts\generate_sbom.py --output $env:TEMP\sbom-source.cdx.json --profile source `
+  --version 0.8.0 --timestamp (git log -1 --format=%cI) --check
 powershell -ExecutionPolicy Bypass -File scripts\release-gate.ps1 -Stage Source -ReleaseVersion 0.8.0
 ```
 
-`bootstrap.ps1` creates `app/backend/.venv`, installs the backend package and runs `pnpm install`.
-The gate then generates the source and prerequisite SBOMs itself. A bare checkout without those
-dependencies cannot produce a truthful dependency inventory: the generator records
-`creatoros:collection-error` and the gate fails rather than passing a document that omits the
-environment.
+The source and prerequisite profiles are standard-library only and need no virtual environment or
+`node_modules`: Python versions come from `app/backend/requirements-runtime.lock`, Node licences from
+the committed `app/desktop/third-party-licenses.json`, and the lockfile supplies the direct
+dependency set. The exact 32-distribution closure is committed, so a fresh install cannot silently
+resolve different versions. The artifact profile is different: it reads the packaged payload and
+must be generated after packaging.
 
-The procedure is reproducible, but the Python inventory is only as exact as the backend
-environment: `app/backend/pyproject.toml` has no lockfile, so a fresh install can resolve different
-patch versions over time. Node versions are pinned by `pnpm-lock.yaml`. A backend lockfile is an
-open reproducibility item; until it exists, reviewers must compare the source SBOM component list
-between the build machine and the release record, and the artifact SBOM remains the authoritative
-inventory of shipped bytes.
+The clean-clone result and its CRLF caveat are in `CLEAN_CLONE_GATE.md`.
 
 Naming a missing manifest is a required-input error (exit 2). The generator never downloads anything:
 it only reads local files and runs the FFmpeg binaries with `-version`.

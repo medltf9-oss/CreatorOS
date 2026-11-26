@@ -1,5 +1,9 @@
 # Wave 3 release-candidate report
 
+> **Superseded for payload/SBOM claims by [`WAVE4_RELEASE_REPORT.md`](WAVE4_RELEASE_REPORT.md).**
+> The four defects listed here (venv-bound artifact SBOM, first-party 0.1.0 metadata, unrecorded
+> `README.txt`, non-reproducible source SBOM) are closed in Wave 4 at code commit `b10fe00`.
+
 **Date:** 2026-11-26  
 **Branch:** `release/v1.0.0-readiness` (a short series of commits on top of merged `main` at `0683773`)  
 **Reviewed code commit:** `ab4499a`  

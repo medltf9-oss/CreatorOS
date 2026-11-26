@@ -20,7 +20,7 @@ The authoritative pass/blocked/not-run matrix is `V1_RELEASE_GATE_MATRIX.md`; th
 | Clean Windows 11 x64 machine with Smart App Control **enforced** | **BLOCKED** | Audit machine is Windows 11 build 26300 with `VerifiedAndReputablePolicyState = 0` (SAC off). No Hyper-V, VirtualBox, QEMU or VMware VM is installed. `scripts\capture-security-state.ps1` reports `sac off (raw 0)`, `clean_install=false`, and three unreadable fields; `scripts\build-sac-evidence.ps1` refuses this machine (6 unmet preconditions, including `sac.enforced`, `windows.clean_install` and `installer.signature_status NotSigned`) and writes no acceptable evidence. | Provide a clean Windows 11 x64 VM or physical machine with SAC on (fresh install, no developer tools), install the downloaded signed artifact, run the first-run flow, and record the evidence JSON consumed by `scripts\release-gate.ps1 -Stage Release`. |
 | Installer actually downloaded from the published release and hash matched | **BLOCKED** | There is no published v1.0.0 release. The only local installer is the unsigned 0.8.0 build. | Publish only after the earlier gates pass; then download the attached asset on a second machine and compare SHA-256. |
 | Signed installer attached to the GitHub release | **BLOCKED** | No signed v1.0.0 installer exists. | Build, sign, verify, attach the exact signed bytes, and publish `SHA256SUMS.txt`. |
-| SBOM for the released artifact | **TOOLING READY; ARTIFACT SBOM NOT PAYLOAD-BOUND** | `scripts/generate_sbom.py` produces a deterministic CycloneDX 1.5 document from real inputs (66 source and 3 prerequisite components on this checkout, including the pinned Ollama and FFmpeg entries) and `scripts/release-gate.ps1` now rejects an SBOM whose format, spec version, component fields or `metadata.component.version` do not match the release. No v1.0.0 SBOM is checked in because no v1.0.0 build exists. Open defect: the artifact profile reads Python components from `app/backend/.venv`, so a clean payload reports 17 development components as `absent-from-payload`; the Artifact gate must not treat that document as proof of shipped inventory until it reads the packaged payload. | Run `python scripts\generate_sbom.py --output releases\1.0.0\sbom.cdx.json --version 1.0.0 --prerequisites app\backend\src\creatoros\resources\prerequisites.v1.json --check` on the release commit, review the document, and attach it to the release. |
+| SBOM for the released artifact | **PASS for the 0.8.0 payload; NOT RUN for 1.0.0** | `scripts/generate_sbom.py` produces deterministic CycloneDX documents: 48 source components from the committed runtime lock and Node licence manifest, 3 prerequisites, and 51 artifact components read from `releases\0.8.0\win-unpacked\resources\backend` (33 Python; 0/0 payload-vs-SBOM discrepancies; tree `49d3fb31…`; installer `d3a73f60…`). No v1.0.0 SBOM exists because no v1.0.0 build exists. | On the release commit and signed payload run the artifact profile with `--artifact` and `--payload releases\1.0.0\win-unpacked\resources\backend`, review it, and attach it. |
 | Secret scan | **PASS (tracked text)** | `scripts\release-gate.ps1 -Stage Source` finds no private keys, GitHub tokens, AWS keys or literal signing passwords in tracked non-test text files. | Re-run on the release commit; also scan the built artifact and logs. |
 | CI green on the release commit | **PASS at `ab4499a`; NOT YET ON A RELEASE COMMIT** | GitHub Actions runs `45730731847` and `45730732090` at `ab4499a`: backend **1,630 passed, 36 skipped**, desktop checks succeeded. The run at `5812915` failed for two environment assumptions, fixed in `ab4499a`. No v1.0.0 release commit exists yet. | Re-run the full workflow on the final 1.0.0 commit and require it before merge. |
 | Branch protection / required checks | **PASS (verified 2026-11-25)** | `gh api` shows `strict: true`, no force pushes, and required contexts `Backend tests (Windows)` and `Desktop checks (Windows)`. | Keep the checks required; do not bypass them for the release PR. |
@@ -89,7 +89,7 @@ exceed 2 GiB, and the components already total more than that before NSIS overhe
 
 | Component | Bytes |
 | --- | ---: |
-| CreatorOS 0.8.0 installer | 143,055,052 |
+| CreatorOS 0.8.0 installer (rebuilt 2026-11-26) | 139,888,520 |
 | Ollama 0.40.18 installer | 1,953,587,080 |
 | FFmpeg + ffprobe 9.1 | 220,965,888 |
 | **Total** | **2,317,608,020** |
@@ -105,14 +105,13 @@ install.
 with measured evidence, separately approved prerequisite assets, or external hosting with a signed
 manifest. Do not claim a single fully offline installer until its final byte size is measured.
 
-### 2.4 The local 0.8.0 `SHA256SUMS.txt` is stale, and v0.8.0 publishes no binaries
+### 2.4 The 0.8.0 `SHA256SUMS.txt` is current; v0.8.0 still publishes no binaries
 
-Measured on 2026-11-25: `releases\0.8.0\SHA256SUMS.txt` records
-`b9686c6e0eeab95c9d5cff0117f469b4242000baa27c56a9837e5ff1f896c4e0` for the installer, but the file on
-disk hashes to `ad8b7772b6f72ad5d1fc51c196b46308cb20acd2001f3a0ac420875d073a7a4b`. The installer's
-mtime is 2026-11-24 23:58:39 while the checksum file was written at 12:30:52: the artifact was rebuilt
-after the manifest, so the manifest describes bytes that no longer exist. `release-gate.ps1`
-`artifact.manifest` catches exactly this.
+On 2026-11-25 the local manifest was stale: it recorded `b9686c6e…` while the installer on disk
+hashed to `ad8b7772…`, and `release-gate.ps1` refused the pair. The 2026-11-26 rebuild replaced both:
+`SHA256SUMS.txt` now records `d3a73f608d903e72de35a5f2def18d31ed367dccbc4fe922ac7f739580e9cc07`
+for the 139,888,520-byte installer, and `artifact.manifest` passes. The stale bytes must not be
+reused.
 
 The published GitHub release `v0.8.0` has **no binary assets** — it is a source release — so no
 public download is affected. The stale file is a local build leftover and must not be reused. Do not

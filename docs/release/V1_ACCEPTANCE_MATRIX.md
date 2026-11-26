@@ -1,8 +1,10 @@
 # v1.0.0 acceptance matrix
 
-**Status:** Wave 3, 2026-11-26. **No v1.0.0 release candidate exists.** The audit machine has Smart
+**Status:** Wave 4, 2026-11-26. **No v1.0.0 release candidate exists.** The audit machine has Smart
 App Control off (`VerifiedAndReputablePolicyState = 0`) and no code-signing certificate, so no row
-here is claimed as v1.0.0 acceptance evidence.
+here is claimed as v1.0.0 acceptance evidence. Section A is the Wave 3 execution log; current
+payload, SBOM, test and CI numbers are in `WAVE4_RELEASE_REPORT.md` and supersede rows S3/S5/S7/S8.
+S9 is closed by Wave 4.
 
 Three classes are kept apart on purpose:
 
@@ -28,7 +30,7 @@ All commands run from `D:\CreatorOS`. Full logs are in the session and the resul
 | S6 | Desktop unit suite | `pnpm test` in `app\desktop` | **PASS** 227/227 |
 | S7 | Backend suite | `.venv\Scripts\python.exe -m pytest -q` in `app\backend` | **PASS** 1,636 passed, 30 skipped, 0 failed (4 min 5 s); 21 skips are migration tests that need a production database on the machine, which this audit machine does not have |
 | S8 | Source gate from a completely clean clone | `git clone --branch release/v1.0.0-readiness --single-branch -c core.autocrlf=false`, `scripts\bootstrap.ps1 -Root <clone> -Apply`, `scripts\release-gate.ps1 -Stage Source -ReleaseVersion 0.8.0` | **PASS** 13/13 at `5812915` (clone clean before and after bootstrap); procedure and CRLF caveat in `CLEAN_CLONE_GATE.md` |
-| S9 | Artifact SBOM vs packaged payload | `... scripts\runtime-inventory.py --payload installer_builds\wave3-check --sbom releases\0.8.0\sbom.cdx.json` | **FINDING** 17 development components in the SBOM are absent from a clean payload; open 1.0.0 requirement (`PRODUCTION_RUNTIME.md`) |
+| S9 | Artifact SBOM vs packaged payload | `... scripts\runtime-inventory.py --payload releases\0.8.0\win-unpacked\resources\backend --sbom releases\0.8.0\sbom.cdx.json` | **CLOSED in Wave 4** — the Wave 3 finding (17 venv components absent from the payload) no longer exists: 33 Python components, 0 absent in either direction, 0/0 discrepancies. See `WAVE4_RELEASE_REPORT.md` |
 
 S1/S2 do not prove SAC-on installation, signed-app launch or a packaged (asar) renderer; they drive
 the development Electron shell against the built renderer, as documented in `SETUP_E2E.md`.

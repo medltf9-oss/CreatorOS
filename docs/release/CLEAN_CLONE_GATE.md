@@ -39,23 +39,26 @@ tree (`git status --porcelain` empty). Once this branch is merged, a default clo
 
 ## Result
 
-Clone and backend environment created from commit `d80aedd0ee63ffbf38544682800da610cf5bd58c`
-(2026-11-26T13:11:09+01:00). `git status --porcelain` was empty before the backend setup and after
-removing the two command logs; no repository file was modified by the verification.
+Clone and backend environment created from commit `b10fe009dab65d7c092a8ab95079a68347564115`
+(2026-11-26T13:19:43+01:00), then fast-forwarded from the earlier `d80aedd` run. `git status
+--porcelain` was empty; no repository file was modified by the verification.
 
 | Evidence | Value |
 | --- | --- |
-| Clone HEAD | `d80aedd0ee63ffbf38544682800da610cf5bd58c` |
+| Clone HEAD | `b10fe009dab65d7c092a8ab95079a68347564115` |
 | Runtime lock in the fresh environment | `backend_lock.py --check` passes, 32 distributions |
 | Source gate | **13 passed, 0 failed**, `RELEASE GATE: PASSED` |
 | Source SBOM | 48 components, serial `urn:uuid:55491264-5c86-556a-b907-4b689f343e40` |
-| Source SBOM SHA-256 | `923355F519624DA2C05834BD1B9D1A3FABE602549CD66B07F1012AAE8A10EBC4` |
-| Same commit in the development checkout | byte-identical SHA-256 (`923355F5…`) |
+| Source SBOM SHA-256 | `38BCB7B8DBAA360C58800AB575632E2ED9EF00A2ED2A1514F733A877CD44D8DD` |
+| Same commit in the development checkout | byte-identical SHA-256 (`38BCB7B8…`) |
 | Artifact SBOM | absent by design at Source; `build-release.ps1` generates it after the installer |
 
 The source SBOM timestamp is the commit time supplied by the gate, so the digest is a property of
-the commit rather than of the clone's wall clock. The earlier hash `7E61D01D…` belongs to the
-pre-commit tree at `b381b24`; it is not expected to reproduce at `d80aedd`.
+the commit rather than of the clone's wall clock. The earlier hashes `7E61D01D…` (tree at
+`b381b24`) and `923355F5…` (`d80aedd`) are correct for their own commits and are not expected to
+reproduce at `b10fe00`. The `releases/` directory was removed before the final gate run so the gate
+generated the document fresh at `b10fe00`; the retained file is that 38BC document, not the earlier
+clone's `923355F5…` copy.
 
 ## What this does not prove
 
