@@ -24,10 +24,10 @@ All commands run from `D:\CreatorOS`. Full logs are in the session and the resul
 | S2 | First-run desktop UI: present-unverified, real 110 MB hash, changed file, 409 card, **Complete anyway** click, override audit row, out-of-band completion | `... scripts\e2e_setup.py --with-ui` | **PASS** 3/3 UI tests, 27.9 s |
 | S3 | Packaged runtime minimization and inventory | `... scripts\runtime-inventory.py --payload installer_builds\wave3-check --no-sbom` | **PASS** exit 0; 34 distributions, 0 development-only, 2,674 files, 63,384,618 B |
 | S4 | Artifact guard: hash, duplicate/missing manifest entries, unsigned refusal, signed path | `pwsh scripts\tests\artifact-guard.tests.ps1` | **PASS** 10/10 |
-| S5 | Source release gate on the working tree | `pwsh scripts\release-gate.ps1 -Stage Source -ReleaseVersion 0.8.0` | **14 passed, 1 failed**; the only failure is `git.clean` with the expected uncommitted Wave 3 files |
+| S5 | Source release gate on the committed tree | `pwsh scripts\release-gate.ps1 -Stage Source -ReleaseVersion 0.8.0` | **PASS** 15/15 at `c912771` |
 | S6 | Desktop unit suite | `pnpm test` in `app\desktop` | **PASS** 227/227 |
 | S7 | Backend suite | `.venv\Scripts\python.exe -m pytest -q` in `app\backend` | **PASS** 1,636 passed, 30 skipped, 0 failed (4 min 5 s); 21 skips are migration tests that need a production database on the machine, which this audit machine does not have |
-| S8 | Source gate from a completely clean clone | `git clone`, `scripts\bootstrap.ps1 -Root <clone> -Apply`, `scripts\release-gate.ps1 -Stage Source -ReleaseVersion 0.8.0` | **PASS** on the final commit; details in `CLEAN_CLONE_GATE.md` |
+| S8 | Source gate from a completely clean clone | `git clone --branch release/v1.0.0-readiness --single-branch -c core.autocrlf=false`, `scripts\bootstrap.ps1 -Root <clone> -Apply`, `scripts\release-gate.ps1 -Stage Source -ReleaseVersion 0.8.0` | **PASS** 13/13 at `5812915` (clone clean before and after bootstrap); procedure and CRLF caveat in `CLEAN_CLONE_GATE.md` |
 | S9 | Artifact SBOM vs packaged payload | `... scripts\runtime-inventory.py --payload installer_builds\wave3-check --sbom releases\0.8.0\sbom.cdx.json` | **FINDING** 17 development components in the SBOM are absent from a clean payload; open 1.0.0 requirement (`PRODUCTION_RUNTIME.md`) |
 
 S1/S2 do not prove SAC-on installation, signed-app launch or a packaged (asar) renderer; they drive

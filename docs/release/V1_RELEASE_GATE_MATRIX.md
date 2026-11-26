@@ -1,18 +1,19 @@
 # v1.0.0 release gate matrix
 
-**Status date:** 2026-11-25
+**Status date:** 2026-11-26
 **Release candidate:** none. Public release remains **v0.8.0** (source only).
-**Readiness commit:** `fda7efc` on `release/v1.0.0-readiness` (PR #6, draft).
+**Readiness code commit:** `ab4499a` on `release/v1.0.0-readiness` (PR #7, draft); later commits on
+this branch are release documents only.
 **Rule:** a mandatory gate passes only with evidence for the exact release commit and artifact.
 `FAIL`, `BLOCKED`, `NOT RUN` and `UNKNOWN` all block the release. This matrix is the authoritative
 summary; details live in the linked documents.
 
 | # | Gate | Status | Evidence | What closes it |
 | ---: | --- | --- | --- | --- |
-| 1 | Source integrity | **PASS (readiness commit)** | `release/v1.0.0-readiness` at `fda7efc`; `git fsck --full` reports only dangling blobs (normal after commits); PR #6 head matches the pushed commit | Re-run on the final release commit; keep the tree clean |
-| 2 | CI on the exact commit | **PASS at `fda7efc`** | GitHub Actions run `45660131410`: backend tests and desktop checks both succeeded (earlier runs at `47516c7` and `68e3f3c` also green). The run at `1eac7b3` failed only because the pinned-FFmpeg byte test ran against a different CI FFmpeg build; the guard was fixed in `6cee073` | Require a fresh green run on the final release commit |
-| 3 | Backend/frontend tests | **PASS (local and CI at `fda7efc`; Wave 3 local)** | Wave 3: backend **1,636 passed, 30 skipped, 0 failed** (21 skips need a production database absent here); desktop **227 passed**; setup E2E **117/117** backend checks and **3/3** UI tests. CI at `fda7efc` was green | Re-run on the final commit and require fresh CI |
-| 4 | Typecheck, build, lint | **PASS (local and CI at `fda7efc`)** | `ruff check src tests` clean; `pnpm typecheck` clean; `pnpm build` succeeded | Re-run on the final commit |
+| 1 | Source integrity | **PASS (readiness commit)** | `release/v1.0.0-readiness` at `ab4499a`; `git fsck --full` reports only dangling blobs (normal after commits); Source gate **15/15** on the readiness tree and clean clone **13/13** at `5812915`; later commits are tests/docs | Re-run on the final release commit; keep the tree clean |
+| 2 | CI on the exact commit | **PASS at `ab4499a`** | GitHub Actions runs `45730731847` (pull request) and `45730732090` (dispatch): backend **1,630 passed, 36 skipped**; desktop checks succeeded. The earlier run at `5812915` failed on two environment assumptions (source-SBOM venv resolution and the setup E2E fixture), both fixed in `ab4499a` | Require a fresh green run on the final release commit |
+| 3 | Backend/frontend tests | **PASS (local at `ab4499a`; CI at `ab4499a`)** | Wave 3 local: backend **1,636 passed, 30 skipped, 0 failed**; desktop **227 passed**; setup E2E **117/117** backend checks and **3/3** UI tests. CI: backend **1,630 passed, 36 skipped** (the additional skips are the environment-bound tests); desktop unit suite green with the 3 GUI journeys skipped | Re-run on the final commit and require fresh CI |
+| 4 | Typecheck, build, lint | **PASS (local and CI at `ab4499a`)** | `ruff check src tests` all checks passed; `pnpm typecheck` exit 0; `pnpm build` exit 0; desktop 227/227; CI lint and type-check steps green | Re-run on the final commit and require fresh CI |
 | 5 | CA-issued certificate | **BLOCKED** | No CA-issued certificate with a private key in either Windows store; `sign-release.ps1 -Check` reports `CSC_LINK : none` | Owner orders a certificate (`OWNER_CERTIFICATE_ACTION.md`) |
 | 6 | Private-key protection | **BLOCKED** | No token, HSM or signing service exists | Certificate issued to hardware or a CA signing service |
 | 7 | Signature inventory | **PASS (baseline)** | `docs/release/SIGNATURE_INVENTORY.md`: 64 PE files measured at 0.8.0 (PyInstaller payload), 44 vendor-signed, 20 unsigned, sign policy defined. The current minimized backend bundle has 51 PE files (1 `python.exe`, 31 extension modules, 19 DLLs) and no PyInstaller bootloaders; the installer adds Electron's own PE set | Regenerate on the packaged release candidate |
