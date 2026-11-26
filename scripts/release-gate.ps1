@@ -286,8 +286,9 @@ if ($sbomPath) {
 }
 
 # The artifact stage must inspect the payload that is actually packaged, not only the SBOM. The
-# inventory parses every shipped dist-info/RECORD and fails on a missing dependency, an out-of-lock
-# distribution, an unowned file, or an SBOM that claims bytes the payload does not contain.
+# inventory parses every shipped dist-info/RECORD and fails on a missing or version-mismatched
+# declared dependency, an unowned file, a RECORD size/hash mismatch, or an SBOM that disagrees with
+# the payload set or bytes. The runtime lock is enforced by the payload build/metadata checks.
 if ($Stage -ne 'Source') {
     $payloadDir = Join-Path $releaseDir 'win-unpacked\resources\backend'
     $gatePython = Get-SbomPython

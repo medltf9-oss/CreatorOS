@@ -35,8 +35,8 @@ Fresh 0.8.0 payload: **2,645 files / 62,513,538 bytes / 33 distributions** (32 l
 
 Artifact SBOM: **51 components** (33 Python, 18 non-Python), serial
 `urn:uuid:8fa3f433-bbad-5548-a6ed-59835a2a1563`, installer SHA-256
-`d3a73f608d903e72de35a5f2def18d31ed367dccbc4fe922ac7f739580e9cc07`. Independent
-`runtime-inventory.py` reports **0 absent in either direction**, 0 size/hash mismatches and exit 0.
+`d3a73f608d903e72de35a5f2def18d31ed367dccbc4fe922ac7f739580e9cc07`. The separate
+`runtime-inventory.py` report shows **0 absent in either direction**, 0 size/hash mismatches and exit 0.
 
 ### 1.2 First-party version metadata
 
@@ -81,7 +81,7 @@ development checkout at the same commit.
 | Desktop checks | typecheck, unit tests and production build green in CI at `b10fe00`; no product-code change this wave |
 | CI at `b10fe00` | run `45818643202`: backend **1,648 passed, 35 skipped**, 0 failed; desktop green |
 | Clean clone | Source gate **13/13 PASSED**; `backend_lock.py --check` 32 distributions |
-| Artifact gate (local) | all non-signing checks pass; **6 expected failures** are the unsigned/no-certificate set |
+| Artifact gate (local) | all non-signing checks pass; **6 failures**, all signing/certificate (the gate has no expected-failure class and exits 1) |
 
 The installer was packaged from `d80aedd`; `b10fe00` changes only verification scripts, tests and
 release documents, so the packaged product bytes are unchanged. The artifact SBOM is bound to the
@@ -130,7 +130,8 @@ Verified facts (specialist 4, hashes recomputed):
 - Ollama's installer is validly signed by Ollama Inc.; `approved_for_bundling` is false. The MIT
   code licence does not establish rights to the installer's GPU runtime payload or model weights.
 - A single asset containing installer + Ollama + FFmpeg would exceed GitHub's 2 GiB per-file limit;
-  separate assets are allowed. Offline bundling therefore requires a split, measured design.
+  GitHub permits separate assets, but redistribute rights are still required. Offline bundling
+  therefore requires a split, measured design.
 
 **Director recommendation, not an owner decision:** keep FFmpeg as an external present-only
 prerequisite; offer Ollama through a user-consented, hash- and signature-verified guided download
@@ -162,10 +163,20 @@ From specialist 5, for the eventual 1.0.0 build:
    notices and approve the separate-asset design.
 4. Decide whether 1.0.0 requires full offline operation; that choice determines the asset layout.
 5. Decide whether to bind the source SBOM to the commit: `releases/` is ignored, and the gate currently checks structure and a 30-day freshness window but not that the document's timestamp equals `HEAD`. A clean clone regenerates it correctly; an old SBOM in a developer checkout can still pass. Adding a timestamp/HEAD equality gate is the smallest fix.
-6. Accept or schedule the residual engineering defects: interpreter digest pinning (D-6), `ffprobe`
-   verification (D-7), Ollama consent rendering/recording (D-8), dead `install` config (D-9), stale
-   default paths (D-10), mid-walk error classification (D-11), FFmpeg URL/override UX (D-12), single
-   ffprobe digest source (D-13), and the documented `npm run package` bypass (D-5).
+6. Accept or schedule the residual engineering defects below. Severity is Director triage, not a
+   risk acceptance or a release approval; none is fixed in Wave 4.
+
+| ID | Defect | Severity | Owner | Disposition |
+| --- | --- | --- | --- | --- |
+| D-5 | Alternate `npm run package` path bypasses the release build/gate | Medium | Release engineering | Gate or remove before 1.0.0 |
+| D-6 | Interpreter signature check is warn-only | High | Release engineering / security | Decide fail-closed policy and test it |
+| D-7 | `ffprobe.exe` is executed but not byte-verified | Medium | Prerequisite tooling | Add digest + verification |
+| D-8 | Ollama `consent.required` is exposed but not rendered/recorded | Medium | Product / setup | Wire UI and audit record |
+| D-9 | Thin-directory provenance is incomplete | Low | Installer | Fold into payload manifest work |
+| D-10 | Eight pre-existing ruff findings in release scripts | Low | Quality | Clean up separately |
+| D-11 | Mid-walk `OSError` exits 1, not the documented 2 | Low | Tooling | Align exit classification |
+| D-12 | FFmpeg URL/409 override UX is ambiguous | Low | Product | Clarify before acceptance |
+| D-13 | Two sources for the `ffprobe` digest | Low | Prerequisite tooling | Use one manifest source |
 
 ## 8. Not claimed
 
