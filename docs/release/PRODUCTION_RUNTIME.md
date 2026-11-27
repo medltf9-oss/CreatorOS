@@ -1,4 +1,10 @@
-# Packaged production runtime and dependency inventory (Wave 4)
+# Packaged production runtime and dependency inventory (Wave 4 baseline; Wave 5 candidate)
+
+> **Wave 5 candidate at `35924e5`:** payload 2,645 files / 62,520,376 bytes / 33 distributions;
+> canonical tree `0475d2b19897da44df336280b86ef4f44637ec0a8d1a282253d6fcc49d549941`; installer
+> `CreatorOS-Setup-0.8.0.exe`, 139,882,940 bytes, SHA-256
+> `a45ffb1e4e499a9c1ae055232774d339e8fe109f52717cf5b42befa7c66d7352`, unsigned. The Wave 4
+> evidence below describes the superseded `d3a73f60…` build.
 
 Scope: validate the minimized backend runtime that the installer ships, and prove that the artifact
 SBOM describes the bytes inside the packaged payload, not the builder's virtualenv. Tool:

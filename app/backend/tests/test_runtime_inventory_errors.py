@@ -6,12 +6,23 @@ stale release directory.
 """
 from __future__ import annotations
 
+import importlib.util
 import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[3]
 SCRIPT = REPO / "scripts" / "runtime-inventory.py"
+
+
+def _inventory_module():
+    spec = importlib.util.spec_from_file_location("runtime_inventory_for_test", SCRIPT)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _run(*args: str) -> subprocess.CompletedProcess:
@@ -34,6 +45,17 @@ def test_a_missing_payload_is_a_tooling_error_not_a_policy_finding(tmp_path: Pat
     assert result.returncode == 2
     assert "Traceback" not in result.stderr
     assert "payload" in result.stderr.lower()
+
+
+def test_a_mid_walk_oserror_is_a_tooling_error(monkeypatch, tmp_path: Path) -> None:
+    module = _inventory_module()
+
+    def denied(*args, **kwargs):
+        raise OSError("access denied")
+
+    monkeypatch.setattr(module.os, "walk", denied)
+    with pytest.raises(module.InventoryError, match="cannot walk payload"):
+        module._walk_payload(tmp_path)
 
 
 def test_a_missing_repository_manifest_is_a_tooling_error(tmp_path: Path) -> None:

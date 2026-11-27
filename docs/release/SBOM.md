@@ -62,16 +62,16 @@ same digest independently and `build-release.ps1` fails if the two disagree.
 
 The source profile reads only committed inputs (`pnpm-lock.yaml`, `third-party-licenses.json`,
 `requirements-runtime.lock`, `pyproject.toml`, `package.json`, `LICENSE`). The serial number is a
-UUIDv5 over the canonical sorted component list; it does not depend on the checkout path, the
-virtualenv, `node_modules`, wall-clock time or component order. `build-release.ps1` and
-`release-gate.ps1` pass the source commit time as `--timestamp`, so the same commit produces the same
-source and prerequisite documents byte-for-byte in any clean clone.
+UUIDv5 over the canonical sorted component list and, when supplied, the source commit; it does not
+depend on the checkout path, the virtualenv, `node_modules`, wall-clock time or component order.
+`build-release.ps1` and `release-gate.ps1` pass the source commit and its commit time, so the same
+commit produces the same source and prerequisite documents byte-for-byte in any clean clone.
 
 Components are sorted by `(type, name, version)` and JSON is written with a fixed indent and LF
 newlines, so the same inputs produce the same bytes apart from `metadata.timestamp`. Without
-`--serial`, the serial number is a UUIDv5 over the sorted component list; it changes exactly when a
-component changes and not when the clock changes. `--timestamp` and `--serial` make a run fully
-reproducible.
+`--serial`, the serial number is a UUIDv5 over the sorted component list and source commit; it
+changes when a component or the commit changes, not when the clock changes. `--timestamp` and
+`--serial` make a run fully reproducible.
 
 ## Generate
 
@@ -125,13 +125,13 @@ must be generated after packaging.
 The clean-clone result and its CRLF caveat are in `CLEAN_CLONE_GATE.md`.
 
 Naming a missing manifest is a required-input error (exit 2). The generator never downloads anything:
-it only reads local files and runs the FFmpeg binaries with `-version`.
+it only reads and hashes local files, and it never executes the FFmpeg binaries.
 
 `--check` re-reads the file just written and exits 1 with a list of structural problems: missing
 top-level fields, duplicate `bom-ref`, a component without a name or type, a malformed hash, an
 application component without a version, or no components. Exit code 2 means a required input was
 missing or unreadable (desktop `package.json`, backend `pyproject.toml`, `pnpm-lock.yaml`, an
-explicitly passed `--prerequisites` file, or an invalid `--timestamp`/`--serial`). A missing FFmpeg binary, an unreadable FFmpeg banner, an
+explicitly passed `--prerequisites` file, or an invalid `--timestamp`/`--serial`). A missing FFmpeg binary, a missing manifest version, an
 absent `.venv`, or incomplete Ollama metadata do not fail the run; each is recorded in
 `creatoros:collection-error` properties so the gap is visible in the document itself.
 
@@ -166,8 +166,9 @@ A missing `version` or SHA-256 is a hard error; a missing size or signer subject
 non-SPDX name such as `MIT for Ollama` is not converted into a licence identifier, so the component
 records `creatoros:license-status=unknown`. The older flat `{"ollama": {...}}` shape is still accepted,
 and a document with any other `schema` value is refused rather than silently ignored. This file is an
-input, not a grant of redistribution rights. A version or SHA-256 that disagrees with the repository's
-`DEPENDENCY_MANIFEST.md` is recorded as a collection error.
+input, not a grant of redistribution rights. The generator hashes the local binary and records the
+manifest version; a local file that does not match the pinned SHA-256 is recorded as a
+`creatoros:collection-error`, which the release gate rejects.
 
 ## How the release gate consumes it
 
@@ -216,8 +217,8 @@ Regenerate and re-run `--check` before every tagged build, and again if any of t
 - `app/backend/pyproject.toml`, or the installed set in `app/backend/.venv` (`pip install`, `pip
   uninstall`, an interpreter change);
 - `LICENSE`;
-- any file under `tools/ffmpeg/bin` (a different FFmpeg build must produce a different hash and
-  banner version);
+- any file under `tools/ffmpeg/bin` (a different FFmpeg build must produce a different hash; the
+  declared version comes from the prerequisites manifest);
 - the prerequisites manifest used for Ollama.
 
 A serial number that changes between two runs means the component list changed; review the diff

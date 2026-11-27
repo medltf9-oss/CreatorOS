@@ -1,8 +1,9 @@
 # v1.0.0 release blockers
 
 **Status: NOT READY.** No v1.0.0 tag, installer or GitHub release has been published.  
-**Audit date:** 2026-11-26  
-**Baseline:** `0.8.0`; Wave 3 readiness work at `c912771` on `release/v1.0.0-readiness` (PR #7).
+**Audit date:** 2026-11-27
+
+**Baseline:** `0.8.0`; Wave 5 candidate at `35924e5` on `release/v1.0.0-readiness` (PR #7).
 `main` is at `0683773` (`0.8.0`), the squash merge of PR #6.
 
 This file records what prevents a truthful v1.0.0 release. A blocker is not closed by changing a
@@ -20,10 +21,10 @@ The authoritative pass/blocked/not-run matrix is `V1_RELEASE_GATE_MATRIX.md`; th
 | Clean Windows 11 x64 machine with Smart App Control **enforced** | **BLOCKED** | Audit machine is Windows 11 build 26300 with `VerifiedAndReputablePolicyState = 0` (SAC off). No Hyper-V, VirtualBox, QEMU or VMware VM is installed. `scripts\capture-security-state.ps1` reports `sac off (raw 0)`, `clean_install=false`, and three unreadable fields; `scripts\build-sac-evidence.ps1` refuses this machine (6 unmet preconditions, including `sac.enforced`, `windows.clean_install` and `installer.signature_status NotSigned`) and writes no acceptable evidence. | Provide a clean Windows 11 x64 VM or physical machine with SAC on (fresh install, no developer tools), install the downloaded signed artifact, run the first-run flow, and record the evidence JSON consumed by `scripts\release-gate.ps1 -Stage Release`. |
 | Installer actually downloaded from the published release and hash matched | **BLOCKED** | There is no published v1.0.0 release. The only local installer is the unsigned 0.8.0 build. | Publish only after the earlier gates pass; then download the attached asset on a second machine and compare SHA-256. |
 | Signed installer attached to the GitHub release | **BLOCKED** | No signed v1.0.0 installer exists. | Build, sign, verify, attach the exact signed bytes, and publish `SHA256SUMS.txt`. |
-| SBOM for the released artifact | **PASS for the 0.8.0 payload; NOT RUN for 1.0.0** | `scripts/generate_sbom.py` produces deterministic CycloneDX documents: 48 source components from the committed runtime lock and Node licence manifest, 3 prerequisites, and 51 artifact components read from `releases\0.8.0\win-unpacked\resources\backend` (33 Python; 0/0 payload-vs-SBOM discrepancies; tree `49d3fb31…`; installer `d3a73f60…`). No v1.0.0 SBOM exists because no v1.0.0 build exists. | On the release commit and signed payload run the artifact profile with `--artifact` and `--payload releases\1.0.0\win-unpacked\resources\backend`, review it, and attach it. |
+| SBOM for the released artifact | **PASS for the Wave 5 0.8.0 candidate; NOT RUN for 1.0.0** | `scripts/generate_sbom.py` produces deterministic CycloneDX documents: 48 source components, 3 prerequisites, and 51 artifact components read from `releases\0.8.0\win-unpacked\resources\backend` (33 Python; 0/0 payload-vs-SBOM discrepancies; tree `0475d2b1…`; runtime manifest `e6b25a84…`; installer `a45ffb1e…`). No v1.0.0 artifact exists. Two unbound source/prerequisites SBOMs left from 2026-11-26 were quarantined under `D:\P\wave5\quarantine\releases-1.0.0`; they are not evidence of a v1.0.0 build. | On the release commit and signed payload run the artifact profile with `--artifact` and `--payload releases\1.0.0\win-unpacked\resources\backend`, review it, and attach it. |
 | Secret scan | **PASS (tracked text)** | `scripts\release-gate.ps1 -Stage Source` finds no private keys, GitHub tokens, AWS keys or literal signing passwords in tracked non-test text files. | Re-run on the release commit; also scan the built artifact and logs. |
-| CI green on the release commit | **PASS at `ab4499a`; NOT YET ON A RELEASE COMMIT** | GitHub Actions runs `45730731847` and `45730732090` at `ab4499a`: backend **1,630 passed, 36 skipped**, desktop checks succeeded. The run at `5812915` failed for two environment assumptions, fixed in `ab4499a`. No v1.0.0 release commit exists yet. | Re-run the full workflow on the final 1.0.0 commit and require it before merge. |
-| Branch protection / required checks | **PASS (verified 2026-11-25)** | `gh api` shows `strict: true`, no force pushes, and required contexts `Backend tests (Windows)` and `Desktop checks (Windows)`. | Keep the checks required; do not bypass them for the release PR. |
+| CI green on the release commit | **PASS at `35924e5` (unsigned candidate)** | GitHub Actions run `45992648710` at `35924e5`: SUCCESS, both backend and desktop jobs. Local full regression is 1,672 passed / 30 skipped / 0 failed. | Re-run the full workflow on the signed final commit and require it before merge. |
+| Branch protection / required checks | **PASS (last verified 2026-11-25; not rechecked at `35924e5`)** | `gh api` showed `strict: true`, no force pushes, and required contexts `Backend tests (Windows)` and `Desktop checks (Windows)`. | Recheck immediately before merge; keep the checks required and do not bypass them. |
 
 ## 2. Product-completeness blockers
 
@@ -96,13 +97,14 @@ exceed 2 GiB, and the components already total more than that before NSIS overhe
 
 | Component | Bytes |
 | --- | ---: |
-| CreatorOS 0.8.0 installer (rebuilt 2026-11-26) | 139,888,520 |
+| CreatorOS 0.8.0 installer (Wave 5 candidate, 2026-11-27) | 139,882,940 |
 | Ollama 0.40.18 installer | 1,953,587,080 |
 | FFmpeg + ffprobe 9.1 | 220,965,888 |
-| **Total** | **2,314,441,488** |
+| **Total** | **2,314,435,908** |
 
-That is about 2.15 GiB, **166,957,840 bytes (159.2 MiB) over** the 2,147,483,648-byte per-file
-limit. The earlier 2,317,608,020 total was arithmetic error; the owner decision does not change.
+That is about 2.15 GiB, **166,952,260 bytes (159.2 MiB) over** the 2,147,483,648-byte per-file
+limit. The earlier 2,317,608,020 total was arithmetic error, and 2,314,441,488 used the superseded
+installer; the owner decision does not change.
 Compression may reduce it, but no compressed payload has been measured. A single `CreatorOS-Setup-1.0.0-x64.exe` containing all three
 is therefore **not demonstrated to be publishable as one GitHub release asset**. Publishing them as
 separate assets is within GitHub's limits (the Ollama installer alone is about 1.82 GiB), but it is
@@ -113,13 +115,12 @@ install.
 with measured evidence, separately approved prerequisite assets, or external hosting with a signed
 manifest. Do not claim a single fully offline installer until its final byte size is measured.
 
-### 2.4 The 0.8.0 `SHA256SUMS.txt` is current; v0.8.0 still publishes no binaries
+### 2.4 The Wave 5 `SHA256SUMS.txt` is current; v0.8.0 still publishes no binaries
 
-On 2026-11-25 the local manifest was stale: it recorded `b9686c6e…` while the installer on disk
-hashed to `ad8b7772…`, and `release-gate.ps1` refused the pair. The 2026-11-26 rebuild replaced both:
-`SHA256SUMS.txt` now records `d3a73f608d903e72de35a5f2def18d31ed367dccbc4fe922ac7f739580e9cc07`
-for the 139,888,520-byte installer, and `artifact.manifest` passes. The stale bytes must not be
-reused.
+The 2026-11-27 Wave 5 rebuild replaced the stale local pair. `SHA256SUMS.txt` records
+`a45ffb1e4e499a9c1ae055232774d339e8fe109f52717cf5b42befa7c66d7352` for the 139,882,940-byte
+installer, the blockmap hash, and `artifact.manifest-scope` passes. The superseded
+`d3a73f60…` bytes must not be reused.
 
 The published GitHub release `v0.8.0` has **no binary assets** — it is a source release — so no
 public download is affected. The stale file is a local build leftover and must not be reused. Do not
@@ -161,7 +162,7 @@ All nine are closed in code with regression tests. They do not close the owner g
 | D-10 | Low | Release engineering | `runtime-inventory.py` requires `--payload`; no `releases/0.8.0` or version default remains. | `test_runtime_inventory_errors.py` |
 | D-11 | Low | Backend | A mid-walk `OSError` is wrapped in `InventoryError` and exits 2 without a traceback. | `test_runtime_inventory_errors.py` |
 | D-12 | Low | Backend/UI | A required-FFmpeg failure names the exact expected path and official source; the override 409 repeats the media path and source. | setup verification tests |
-| D-13 | Low | Backend | `runtime-manifest.json` is the single digest source; no second ffprobe digest list. | manifest/SBOM tests |
+| D-13 | Low | Backend | `prerequisites.v1.json` is the single source for FFmpeg/ffprobe size and SHA-256; setup, SBOM and deploy checks read it, and no second digest list is authoritative. | prerequisites/SBOM tests |
 
 ### 2.7 Version and release artifacts
 

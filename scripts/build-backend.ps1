@@ -15,10 +15,11 @@
 
     Why not PyInstaller (see docs/ADR/ADR-34-Release-Packaging.md):
 
-      * Smart App Control is ON on this machine and blocks every newly built unsigned executable.
-        A frozen bundle is such an executable; every copy of the Python interpreter keeps its
-        publisher signature and therefore keeps working. This is not a preference, it is the only
-        layout that runs here without changing an OS security setting.
+      * Smart App Control can block a newly built unsigned executable. A frozen bundle is such an
+        executable; every copy of the Python interpreter keeps its publisher signature and therefore
+        keeps working under SAC. This layout does not require changing an OS security setting. The
+        build machine's current SAC state is reported by `capture-security-state.ps1`; it is not
+        assumed to be on.
       * It is also more debuggable: a traceback from the shipped backend names a real file, and an
         operator can run it by hand with no build step.
       * The cost is size (110 MB vs 39 MB). The installer compresses it; the difference is not worth

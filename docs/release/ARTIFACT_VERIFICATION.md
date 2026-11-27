@@ -4,7 +4,7 @@ The execution harnesses verify the release artifact immediately before they star
 documents what is checked, when, the exact commands, the difference between an unsigned development
 build and a signed release, and the gap the guard does not close.
 
-**Current state on this machine (2026-11-26): no code-signing certificate is available.** No
+**Current state on this machine (2026-11-27): no code-signing certificate is available.** No
 Authenticode signature or RFC 3161 timestamp is claimed here for any CreatorOS artifact. The
 `0.8.0` installer is `NotSigned`; its `SHA256SUMS.txt` matches the current bytes, so the guard
 accepts it only with the explicit development-only `-AllowUnsigned` flag (see section 6).
@@ -169,11 +169,11 @@ Authenticode genuinely returns `NotSigned` for it. It is never executed.
 
 ```
 releases\0.8.0\CreatorOS-Setup-0.8.0.exe
-  bytes    139,888,520
-  sha256   d3a73f608d903e72de35a5f2def18d31ed367dccbc4fe922ac7f739580e9cc07
+  bytes    139,882,940
+  sha256   a45ffb1e4e499a9c1ae055232774d339e8fe109f52717cf5b42befa7c66d7352
   Authenticode Status  NotSigned
 
-releases\0.8.0\SHA256SUMS.txt records the same d3a73f60...e9cc07 digest
+releases\0.8.0\SHA256SUMS.txt records the same a45ffb1e...d7352 digest
 ```
 
 The 0.8.0 manifest and installer now agree, and the Wave 5 artifact stamp binds the installer,

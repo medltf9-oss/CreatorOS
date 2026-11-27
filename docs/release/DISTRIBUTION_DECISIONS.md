@@ -11,10 +11,10 @@ evidence that must exist before the release gate may accept it. Owner decisions 
 the icon, `LICENSE`, `NOTICE` and `THIRD_PARTY_NOTICES.md`. It does **not** ship FFmpeg, ffprobe or
 Ollama. `app/backend/src/creatoros/resources/prerequisites.v1.json` records
 `approved_for_bundling: false` for both components, and `THIRD_PARTY_NOTICES.md` says the same in
-prose. The 0.8.0 installer is 139,888,520 bytes. Adding the pinned Ollama installer
-(1,953,587,080 B) and both FFmpeg binaries (220,965,888 B) would total **2,314,441,488 B**
-(2.15 GiB), which is **166,957,840 B over** GitHub's 2,147,483,648-byte per-file limit. The former
-2,317,608,020 total was arithmetic error.
+prose. The Wave 5 0.8.0 installer is 139,882,940 bytes. Adding the pinned Ollama installer
+(1,953,587,080 B) and both FFmpeg binaries (220,965,888 B) would total **2,314,435,908 B**
+(2.15 GiB), which is **166,952,260 B over** GitHub's 2,147,483,648-byte per-file limit. The former
+2,317,608,020 total was arithmetic error; 2,314,441,488 used the superseded installer.
 
 Consequences:
 
