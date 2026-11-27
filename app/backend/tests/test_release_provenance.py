@@ -38,3 +38,9 @@ def test_readme_does_not_advertise_a_bypass_path():
     readme = (REPO / "README.md").read_text(encoding="utf-8")
     assert "pnpm package" not in readme
     assert "npm run package" not in readme
+
+
+def test_bundle_verifier_waits_for_the_exit_code():
+    build = (REPO / "scripts" / "build-backend.ps1").read_text(encoding="utf-8")
+    assert "$proc.WaitForExit()" in build
+    assert "$exitCode = $proc.ExitCode" in build

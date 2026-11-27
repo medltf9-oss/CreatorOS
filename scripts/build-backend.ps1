@@ -249,9 +249,14 @@ function Invoke-BundlePython {
             Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
             throw "bundled interpreter timed out after $TimeoutSeconds s: $($Arguments -join ' ')"
         }
+        # WaitForExit(int) can return before the exit code and redirected streams are observable.
+        # The no-argument overload closes that race; reading ExitCode immediately can otherwise
+        # report a spurious failure for a process that actually exited 0.
+        $proc.WaitForExit()
+        $exitCode = $proc.ExitCode
         $stdout = if (Test-Path $stdoutPath) { Get-Content $stdoutPath -Raw } else { '' }
         $stderr = if (Test-Path $stderrPath) { Get-Content $stderrPath -Raw } else { '' }
-        return [pscustomobject]@{ ExitCode = $proc.ExitCode; StdOut = $stdout; StdErr = $stderr }
+        return [pscustomobject]@{ ExitCode = $exitCode; StdOut = $stdout; StdErr = $stderr }
     } finally {
         Remove-Item $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
     }
