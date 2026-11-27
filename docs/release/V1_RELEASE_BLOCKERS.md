@@ -55,18 +55,25 @@ The official Ollama `0.40.18` installer was downloaded and verified:
 
 **What now exists** (implemented and tested in this audit):
 
-- `app/backend/src/creatoros/resources/prerequisites.v1.json` pins Ollama and FFmpeg with exact sizes,
-  SHA-256 digests, publisher subjects, installer arguments, consent requirements and an explicit
-  `redistribution.approved_for_bundling: false` for both.
-- `GET /setup/status` reports presence only (install path, bounded loopback probe, models, FFmpeg
-  `-version`, disk free space and a real write test) and never claims a file is verified.
+- `app/backend/src/creatoros/resources/prerequisites.v1.json` pins Ollama, FFmpeg and ffprobe as
+  three separate components with exact sizes, SHA-256 digests, publisher subjects, consent
+  requirements, an official https source URL and an explicit
+  `redistribution.approved_for_bundling: false` for all three. The dead `install` blocks and
+  `companion_filenames` are gone; acquisition is `official-download` (Ollama) or `local` (FFmpeg
+  and ffprobe).
+- `GET /setup/status` reports presence only (install path, bounded loopback probe, models, stat-only
+  FFmpeg/ffprobe presence, disk free space and a real write test). It never executes a downloaded
+  FFmpeg binary and never claims a file is verified.
 - `POST /setup/prerequisites/{id}/verify` hashes a file the user already has and checks size,
   Authenticode status, publisher subject and RFC 3161 timestamp; `unknown` is never reported as pass.
+- `POST /setup/prerequisites/{id}/consent` records the network-download consent that Ollama requires;
+  the UI blocks the official download until it is recorded and completion audit metadata includes the
+  recorded consents.
 - `POST /setup/complete` records the decision (finished or skipped AI) in the database and the audit log.
 - The first-run page shows those results, links to the official download, and lets the user finish or
   skip AI setup without a terminal.
-- `scripts/release-gate.ps1` validates the manifest and cross-checks every pinned digest against
-  `docs/release/DEPENDENCY_MANIFEST.md`.
+- `scripts/release-gate.ps1` validates the JSON pins and their SHA-256 values directly; the Markdown
+  `DEPENDENCY_MANIFEST.md` is no longer a second source of truth.
 
 **What still does not exist:**
 
@@ -92,10 +99,11 @@ exceed 2 GiB, and the components already total more than that before NSIS overhe
 | CreatorOS 0.8.0 installer (rebuilt 2026-11-26) | 139,888,520 |
 | Ollama 0.40.18 installer | 1,953,587,080 |
 | FFmpeg + ffprobe 9.1 | 220,965,888 |
-| **Total** | **2,317,608,020** |
+| **Total** | **2,314,441,488** |
 
-That is about 2.16 GiB, roughly 170 MB over the per-file limit. Compression may reduce it, but no
-compressed payload has been measured. A single `CreatorOS-Setup-1.0.0-x64.exe` containing all three
+That is about 2.15 GiB, **166,957,840 bytes (159.2 MiB) over** the 2,147,483,648-byte per-file
+limit. The earlier 2,317,608,020 total was arithmetic error; the owner decision does not change.
+Compression may reduce it, but no compressed payload has been measured. A single `CreatorOS-Setup-1.0.0-x64.exe` containing all three
 is therefore **not demonstrated to be publishable as one GitHub release asset**. Publishing them as
 separate assets is within GitHub's limits (the Ollama installer alone is about 1.82 GiB), but it is
 only lawful if the redistribution rights in §2.1–§2.2 are cleared, and it is no longer a single-file
@@ -131,7 +139,7 @@ fixed here; the rest are recorded so they are not mistaken for release-ready.
 | Setup could be completed while a required check was `fail` (e.g. `media.ffmpeg`) | Medium | `api\routes\setup.py`, `Setup.tsx` | **Fixed**: `POST /setup/complete` returns 409 `REQUIRED_CHECKS_FAILING`; the UI shows the ids and requires an explicit *Complete anyway* that sends `override_required_checks: true`, recorded in state and audit metadata |
 | Completion overwrote `completed_at`, dropped `notes` when omitted, and stored but never compared `version` | Medium | `state.py` | **Fixed**: completion is idempotent (first `completed_at` and `completed_version` preserved, notes kept unless replaced); status reports `version_changed` and a non-blocking `setup.version_changed` warning. Decision: the recorded completion is kept on upgrade and the wizard does not reopen |
 | Any Ollama version (or a reachable remote endpoint) reported `ok`; the pinned version was never compared | Medium | `api\routes\setup.py`, `detection.py` | **Fixed**: the component detail and an `ai.ollama.version` check state whether the installed version matches the pin (warn, not a hard gate). A reachable remote endpoint is still reported as reachable, not installed |
-| `ffprobe` is never verified and `companion_filenames` is dead config | Medium | `prerequisites.v1.json:61`, `verify.py` | Open: the FFmpeg component verifies `ffmpeg.exe` only; a `ffprobe` row or an explicit companion-check needs a manifest/schema decision |
+| `ffprobe` was never verified and `companion_filenames` was dead config | Medium | `prerequisites.v1.json`, `verify.py` | **Fixed (D-7/D-13)**: ffprobe is its own pinned component with its own size/SHA-256; the media check fails if either binary is missing; detection is stat-only and verification runs only through `/verify` |
 | Verify accepted any absolute path, with no timeout, cancellation or concurrency limit | Medium | `api\routes\setup.py`, `verify.py` | **Fixed**: symlink/reparse-point and non-regular targets are rejected with `VERIFY_*` 422 codes, files over 4 GiB are refused, runs are serialised and a 120 s deadline returns 504 without writing a record |
 | `production-health.ps1` contained a literal 0x08 byte in the venv path, so post-uninstall checks aborted | High | `scripts\production-health.ps1:62` | **Fixed**: path restored, script parses |
 | `current` is a size/mtime fingerprint, not a live hash: a same-size content swap with a forced-identical `st_mtime_ns` stays `verified` until the next `/verify` | Low (accepted) | `verify.py`, `state.py` | Accepted trade-off: status is a GET and must not re-hash 1.8 GiB. `/verify` always re-hashes; the UI says "recorded verification" |
@@ -139,7 +147,23 @@ fixed here; the rest are recorded so they are not mistaken for release-ready.
 | A recorded failed verification does not carry the failing check ids; the UI must re-run Verify to show them | Low | `schemas\setup.py`, `verify.py` | Open: additive `failure_ids` field if operators need it |
 | Fingerprint check and hash are not atomic (TOCTOU): the lock serialises verifies, not external writers | Low | `verify.py` | Accepted: hash is re-read by `/verify`; no privilege boundary is crossed |
 
-### 2.6 Version and release artifacts
+### 2.6 Wave 5 engineering defects D-5..D-13
+
+All nine are closed in code with regression tests. They do not close the owner gates in section 1.
+
+| ID | Severity | Owner | Resolution | Test / gate |
+| --- | --- | --- | --- | --- |
+| D-5 | Medium | Release engineering | Removed the direct `package`/`package:dir` scripts; only `scripts/build-release.ps1` builds an installer. It writes `release-provenance.json` binding artifact, commit, payload tree, runtime manifest and all three SBOM hashes. | `test_release_provenance.py`; `artifact.build-provenance` |
+| D-6 | Medium | Backend/release | Committed SHA-256/size manifest for 47 interpreter files; build refuses a non-Valid Python signature or a signer that is not the Python Software Foundation; payload `--strict-extras` rejects extra executables/DLLs. | `test_runtime_manifest.py`; `artifact.interpreter` |
+| D-7 | Medium | Backend | `ffprobe.exe` is a separate pinned component; `detect_ffmpeg` is stat-only and never executes an unverified binary. | setup tests; `test_detection_does_not_execute_an_unverified_ffmpeg` |
+| D-8 | Medium | Backend/UI | Ollama consent is a real endpoint, persisted in `setup.consent`, rendered as a checkbox, required before the download link, and included in completion audit metadata. | consent API/audit tests |
+| D-9 | Low | Backend | Removed the dead `install` configuration from `prerequisites.v1.json`; the schema has no installer action. | manifest tests |
+| D-10 | Low | Release engineering | `runtime-inventory.py` requires `--payload`; no `releases/0.8.0` or version default remains. | `test_runtime_inventory_errors.py` |
+| D-11 | Low | Backend | A mid-walk `OSError` is wrapped in `InventoryError` and exits 2 without a traceback. | `test_runtime_inventory_errors.py` |
+| D-12 | Low | Backend/UI | A required-FFmpeg failure names the exact expected path and official source; the override 409 repeats the media path and source. | setup verification tests |
+| D-13 | Low | Backend | `runtime-manifest.json` is the single digest source; no second ffprobe digest list. | manifest/SBOM tests |
+
+### 2.7 Version and release artifacts
 
 The source is still `0.8.0`. No `1.0.0` version bump, release notes for 1.0.0, SBOM artifact, signed
 build or tag exists. This is deliberate: releasing `1.0.0` without the gates above would be a

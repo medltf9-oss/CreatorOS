@@ -71,11 +71,18 @@ $x = Join-Path $basePrefix "python$pyVersion.dll"
 if (-not (Test-Path $pythonExe)) { throw "python.exe not found in $basePrefix" }
 if (-not (Test-Path $x)) { throw "python$pyVersion.dll not found in $basePrefix" }
 
+Write-Step 'verifying the interpreter against the committed runtime manifest'
+& $venvPython -B (Join-Path $scriptDir 'runtime_manifest.py') --check --root $basePrefix
+if ($LASTEXITCODE -ne 0) { throw 'the base interpreter does not match app\backend\runtime-manifest.json' }
+
 Write-Step 'checking the interpreter signature'
 $sig = Get-AuthenticodeSignature $pythonExe
 Write-Host "    $pythonExe -> $($sig.Status) ($($sig.SignerCertificate.Subject))"
 if ($sig.Status -ne 'Valid') {
-    Write-Warning "the interpreter is not validly signed; Smart App Control may block the installed app"
+    throw "the interpreter is not validly signed ($($sig.Status)); refusing to ship it"
+}
+if (-not $sig.SignerCertificate -or $sig.SignerCertificate.Subject -notlike '*O=Python Software Foundation*') {
+    throw "the interpreter signer is not Python Software Foundation: $($sig.SignerCertificate.Subject)"
 }
 
 Write-Step "rebuilding $OutputRoot"
@@ -90,6 +97,10 @@ foreach ($dll in @("python$pyVersion.dll", 'python3.dll', 'vcruntime140.dll', 'v
 }
 Copy-Item (Join-Path $basePrefix 'DLLs') -Destination $OutputRoot -Recurse
 Copy-Item (Join-Path $basePrefix 'Lib') -Destination $OutputRoot -Recurse
+# The copied interpreter must still match the committed manifest. This catches a copy fault, a
+# substituted base directory, and any extra .exe/.dll/.pyd dropped into the runtime.
+& $venvPython -B (Join-Path $scriptDir 'runtime_manifest.py') --check --root $OutputRoot --strict-extras
+if ($LASTEXITCODE -ne 0) { throw 'the assembled interpreter does not match app\backend\runtime-manifest.json' }
 # LICENSE is required by the PSF licence when redistributing the interpreter.
 $license = Join-Path $basePrefix 'LICENSE.txt'
 if (Test-Path $license) { Copy-Item $license -Destination (Join-Path $OutputRoot 'PYTHON-LICENSE.txt') }

@@ -42,7 +42,6 @@ class Component:
     required: bool
     acquisition: dict[str, Any]
     signature: dict[str, Any]
-    install: dict[str, Any]
     consent: dict[str, Any]
     license: dict[str, Any]
     redistribution: dict[str, Any]
@@ -106,6 +105,7 @@ class Component:
             "vendor": self.acquisition.get("vendor"),
             "license": self.license,
             "redistribution": self.redistribution,
+            "source": self.acquisition.get("source"),
             "consent": self.consent,
             "signature_required": self.requires_signature,
             "expected_subject": self.expected_subject,
@@ -199,7 +199,6 @@ def _validate_component(raw: Any, index: int) -> Component:
         required=bool(raw.get("required", False)),
         acquisition=acquisition,
         signature=signature,
-        install=_require_object(raw, "install", where),
         consent=_require_object(raw, "consent", where),
         license=license_block,
         redistribution=redistribution,

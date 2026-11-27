@@ -93,6 +93,9 @@ function PrerequisiteCard({
   const [result, setResult] = useState<VerifyResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [linkNote, setLinkNote] = useState<string | null>(null);
+  const [consentChecked, setConsentChecked] = useState(false);
+  const [consentAccepted, setConsentAccepted] = useState(component.consent_accepted);
+  const [recordingConsent, setRecordingConsent] = useState(false);
 
   const truth = prerequisiteTruth(component);
   const record = component.verification ?? null;
@@ -114,15 +117,46 @@ function PrerequisiteCard({
     }
   }
 
+  async function acceptConsent() {
+    setRecordingConsent(true);
+    setError(null);
+    try {
+      await api.recordPrerequisiteConsent(component.id, true);
+      setConsentAccepted(true);
+      setLinkNote('Consent recorded. The official download is now available.');
+      onRecheck();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRecordingConsent(false);
+    }
+  }
+
   async function openDownload() {
-    if (!component.download_url) return;
-    const bridge = window.creatoros;
-    if (!bridge?.openAuthUrl) {
-      setLinkNote(component.download_url);
+    const url = component.download_url;
+    if (!url) return;
+    if (component.consent_required && !consentAccepted) {
+      setLinkNote('Record your consent first; no download link is offered before that decision.');
       return;
     }
-    const opened = await bridge.openAuthUrl(component.download_url);
+    const bridge = window.creatoros;
+    if (!bridge?.openAuthUrl) {
+      setLinkNote(url);
+      return;
+    }
+    const opened = await bridge.openAuthUrl(url);
     setLinkNote(opened.ok ? 'Opened in your browser. Verify the file once it lands in Downloads.' : opened.error ?? 'Could not open a browser.');
+  }
+
+  async function openSource() {
+    if (!component.source_url) return;
+    const bridge = window.creatoros;
+    if (!bridge?.openAuthUrl) {
+      setLinkNote(component.source_url);
+      return;
+    }
+    const opened = await bridge.openAuthUrl(component.source_url);
+    setLinkNote(opened.ok ? 'Opened the publisher page in your browser.' : opened.error ?? 'Could not open a browser.');
   }
 
   return (
@@ -173,12 +207,61 @@ function PrerequisiteCard({
         </div>
       </div>
 
+      {component.consent_required ? (
+        <div className="mt-3 rounded-lg border border-sky-500/30 bg-sky-500/5 p-3">
+          <p className="text-[12px] leading-relaxed text-slate-300">{component.consent_summary}</p>
+          {consentAccepted || component.consent_accepted ? (
+            <p className="mt-2 text-[11.5px] text-emerald-300/90">
+              Consent recorded{component.consent_recorded_at ? ` at ${component.consent_recorded_at}` : ''}.
+              The publisher installer still runs with its own prompt; CreatorOS never runs it silently.
+            </p>
+          ) : (
+            <div className="mt-2 space-y-2">
+              <label className="flex items-start gap-2 text-[12px] text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={consentChecked}
+                  onChange={(event) => setConsentChecked(event.target.checked)}
+                  className="mt-0.5"
+                />
+                <span>
+                  I understand this opens the publisher's official page and downloads a third-party
+                  installer. I will verify it before running it.
+                </span>
+              </label>
+              <Button
+                variant="primary"
+                busy={recordingConsent}
+                disabled={!consentChecked}
+                onClick={() => void acceptConsent()}
+              >
+                Record consent
+              </Button>
+            </div>
+          )}
+        </div>
+      ) : null}
+
       {component.download_url ? (
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <Button variant="default" onClick={() => void openDownload()}>
+          <Button
+            variant="default"
+            disabled={component.consent_required && !consentAccepted && !component.consent_accepted}
+            onClick={() => void openDownload()}
+          >
             <ExternalLink size={13} /> Official download page
           </Button>
           <code className="break-all font-mono text-[10.5px] text-slate-500">{component.download_url}</code>
+        </div>
+      ) : null}
+      {component.source_url ? (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <Button variant="default" onClick={() => void openSource()}>
+            <ExternalLink size={13} /> Publisher build page
+          </Button>
+          <span className="text-[11.5px] text-slate-500">
+            This is guidance, not an automatic download. Verify both binaries after installing.
+          </span>
         </div>
       ) : null}
       {linkNote ? <p className="mt-2 break-all text-[11.5px] text-slate-500">{linkNote}</p> : null}

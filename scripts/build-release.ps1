@@ -87,8 +87,15 @@ Assert-Exists (Join-Path $desktop 'build\installerIcon.ico') 'installer icon'
 
 # --- 2. backend bundle ----------------------------------------------------------------------
 if ($SkipBackend) {
-    Write-Step 'backend: reusing installer_builds\backend'
-    Assert-Exists (Join-Path $repo 'installer_builds\backend\python.exe') 'backend bundle'
+    Write-Step 'backend: reusing installer_builds\backend (verified, not trusted blindly)'
+    $reusedBackend = Join-Path $repo 'installer_builds\backend'
+    Assert-Exists (Join-Path $reusedBackend 'python.exe') 'backend bundle'
+    & (Join-Path $backend '.venv\Scripts\python.exe') -B (Join-Path $scriptDir 'runtime-inventory.py') `
+        --payload $reusedBackend --no-sbom
+    if ($LASTEXITCODE -ne 0) { throw 'the reused backend failed the runtime/provenance inventory' }
+    & (Join-Path $backend '.venv\Scripts\python.exe') -B (Join-Path $scriptDir 'payload_metadata.py') `
+        --check --payload $reusedBackend --project $backend
+    if ($LASTEXITCODE -ne 0) { throw 'the reused backend first-party metadata does not match this commit' }
 } else {
     Write-Step 'backend: assembling the interpreter bundle and verifying it'
     & (Join-Path $scriptDir 'build-backend.ps1')
@@ -171,13 +178,18 @@ Assert-Exists $payloadDir 'packaged backend payload'
 $bundlePython = Join-Path $payloadDir 'python.exe'
 $metadataScript = Join-Path $repo 'scripts\payload_metadata.py'
 $sbomPath = Join-Path $releaseDir 'sbom.cdx.json'
+# A source SBOM names a commit. A modified tracked file would make that claim false.
+$dirty = (& git -C $repo status --porcelain --untracked-files=no)
+if ($dirty) { throw "release build from a dirty tree; commit or revert first:`n$dirty" }
 $sourceTimestamp = (& git -C $repo log -1 --format=%cI).Trim()
+$sourceCommit = (& git -C $repo rev-parse HEAD).Trim()
 if (-not $sourceTimestamp) { throw 'cannot read the source commit timestamp for a reproducible source SBOM' }
-& $sbomPython $sbomPythonScript --output $sourceSbomPath --repo-root $repo --version $desktopVersion --profile source --timestamp $sourceTimestamp --check
+if ($sourceCommit -notmatch '^[0-9a-f]{40}$') { throw 'cannot read the exact source commit for the SBOM' }
+& $sbomPython $sbomPythonScript --output $sourceSbomPath --repo-root $repo --version $desktopVersion --profile source --timestamp $sourceTimestamp --source-commit $sourceCommit --check
 if ($LASTEXITCODE -ne 0) { throw 'source SBOM generation failed' }
-& $sbomPython $sbomPythonScript --output $prereqSbomPath --repo-root $repo --version $desktopVersion --profile prerequisites --prerequisites $prerequisites --timestamp $sourceTimestamp --check
+& $sbomPython $sbomPythonScript --output $prereqSbomPath --repo-root $repo --version $desktopVersion --profile prerequisites --prerequisites $prerequisites --timestamp $sourceTimestamp --source-commit $sourceCommit --check
 if ($LASTEXITCODE -ne 0) { throw 'prerequisite SBOM generation failed' }
-& $sbomPython $sbomPythonScript --output $sbomPath --repo-root $repo --version $desktopVersion --profile artifact --prerequisites $prerequisites --artifact $setup --payload $payloadDir --check
+& $sbomPython $sbomPythonScript --output $sbomPath --repo-root $repo --version $desktopVersion --profile artifact --prerequisites $prerequisites --artifact $setup --payload $payloadDir --source-commit $sourceCommit --check
 if ($LASTEXITCODE -ne 0) { throw 'artifact SBOM generation failed' }
 
 # --- 8. packaged runtime guard ----------------------------------------------------------------
@@ -217,6 +229,35 @@ foreach ($name in @('creatoros-backend', 'creatoros-desktop')) {
 & $bundlePython -B $metadataScript --check --payload $payloadDir --project (Join-Path $repo 'app\backend')
 if ($LASTEXITCODE -ne 0) { throw 'packaged first-party metadata verification failed' }
 Write-Host '  SBOM source/artifact Python sets and payload metadata agree' -ForegroundColor Green
+
+# --- 9. build provenance -----------------------------------------------------------------------
+# Only this script writes the stamp. The Artifact gate refuses an installer without one, so a
+# hand-run electron-builder cannot leave bytes that look releasable even if every other file is fresh.
+Write-Step 'provenance: stamping the exact build inputs and artifact'
+$provenancePath = Join-Path $releaseDir 'release-provenance.json'
+$runtimeManifestPath = Join-Path $repo 'app\backend\runtime-manifest.json'
+Assert-Exists $runtimeManifestPath 'committed runtime manifest'
+$artifactHash = (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLowerInvariant()
+$provenance = [ordered]@{
+    schema = 'creatoros.release-provenance.v1'
+    release = $desktopVersion
+    source_commit = $sourceCommit
+    source_timestamp = $sourceTimestamp
+    builder = 'scripts/build-release.ps1'
+    artifact_name = (Split-Path -Leaf $setup)
+    artifact_sha256 = $artifactHash
+    payload_tree_sha256 = [string]$inventory.payload.tree_sha256
+    payload_file_count = [int]$inventory.payload.file_count
+    runtime_manifest_sha256 = (Get-FileHash -LiteralPath $runtimeManifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    source_sbom_sha256 = (Get-FileHash -LiteralPath $sourceSbomPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    prerequisites_sbom_sha256 = (Get-FileHash -LiteralPath $prereqSbomPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    artifact_sbom_sha256 = (Get-FileHash -LiteralPath $sbomPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    signed = [bool]($env:CSC_LINK -or $CertificateThumbprint)
+    clean_tree = $true
+    built_at = (Get-Date).ToUniversalTime().ToString('o')
+}
+$provenance | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $provenancePath -Encoding utf8
+Write-Host "  provenance: $provenancePath" -ForegroundColor Green
 Write-Step 'done'
 Write-Host "Installer: $setup"
 Write-Host "Verify with: powershell -ExecutionPolicy Bypass -File scripts\verify-install.ps1"

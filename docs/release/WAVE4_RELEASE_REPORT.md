@@ -1,5 +1,11 @@
 # Wave 4 — production payload integrity and release decision closure
 
+> **Superseded by `docs/release/WAVE5_RELEASE_REPORT.md` for the release decision.** This file is
+> retained as the Wave 4 record. Two claims below are corrected there: the artifact SBOM listed
+> 2,644 payload files while the payload had 2,645 (Wave 5 regenerates and binds the SBOM), and the
+> Wave 4 Artifact gate's non-signing pass is not reproducible from those retained bytes. Wave 4 did
+> not add build provenance; Wave 5 does.
+
 **Date:** 2026-11-26. **Branch:** `release/v1.0.0-readiness` (PR #7, draft). **Product version:**
 0.8.0, unchanged. **Code commit for this wave:** `b10fe00` (2026-11-26T13:19:43+01:00); the final
 commit on the branch is release evidence only. No tag, installer attachment, merge, signature, SAC

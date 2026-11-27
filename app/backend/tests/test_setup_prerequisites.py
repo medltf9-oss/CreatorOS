@@ -43,7 +43,6 @@ def _document(**overrides: object) -> dict[str, object]:
             "sha256": hashlib.sha256(b"abc").hexdigest(),
         },
         "signature": {"required": False, "expected_subject": None, "timestamp_required": False},
-        "install": {"technology": "none", "arguments": [], "silent": True, "elevates": False},
         "consent": {"required": True, "network_required": True, "summary": "sample"},
         "license": {"name": "MIT"},
         "redistribution": {"approved_for_bundling": False, "detail": "not approved"},
@@ -76,6 +75,15 @@ def test_shipped_manifest_is_valid_and_pins_a_hash_for_every_component():
     assert ollama.needs_consent is True
     # The manifest must keep telling the truth about bundling: v1.0.0 has no approval.
     assert ollama.redistribution_approved is False
+    ffmpeg = manifest.get("ffmpeg")
+    ffprobe = manifest.get("ffprobe")
+    assert ffmpeg.size_bytes == 110590976
+    assert ffmpeg.sha256 == "ed8f66cb877087a96f5bbb40a2944f0e764f2ad8870d5cb647360d912e62bc07"
+    assert ffprobe.size_bytes == 110374912
+    assert ffprobe.sha256 == "df0199f606faa88e9ad192732a7c3987acfb647663534c297772e17730611a08"
+    assert ffmpeg.acquisition.get("companion_filenames") is None
+    for component in manifest.components:
+        assert "install" not in component.acquisition
 
 
 def test_manifest_rejects_a_plain_http_download():

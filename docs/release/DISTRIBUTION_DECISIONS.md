@@ -11,7 +11,10 @@ evidence that must exist before the release gate may accept it. Owner decisions 
 the icon, `LICENSE`, `NOTICE` and `THIRD_PARTY_NOTICES.md`. It does **not** ship FFmpeg, ffprobe or
 Ollama. `app/backend/src/creatoros/resources/prerequisites.v1.json` records
 `approved_for_bundling: false` for both components, and `THIRD_PARTY_NOTICES.md` says the same in
-prose. The packaged 0.8.0 payload is 2,317,608,020 bytes before either payload is added.
+prose. The 0.8.0 installer is 139,888,520 bytes. Adding the pinned Ollama installer
+(1,953,587,080 B) and both FFmpeg binaries (220,965,888 B) would total **2,314,441,488 B**
+(2.15 GiB), which is **166,957,840 B over** GitHub's 2,147,483,648-byte per-file limit. The former
+2,317,608,020 total was arithmetic error.
 
 Consequences:
 
@@ -31,7 +34,7 @@ Consequences:
 | `ffmpeg.exe` | 110,590,976 bytes, SHA-256 `ed8f66cb877087a96f5bbb40a2944f0e764f2ad8870d5cb647360d912e62bc07` |
 | `ffprobe.exe` | 110,374,912 bytes, SHA-256 `df0199f606faa88e9ad192732a7c3987acfb647663534c297772e17730611a08` |
 | Authenticode | not signed |
-| Licence | GPLv3, SPDX `GPL-3.0-only`; built `--enable-gpl --enable-version3 --enable-libx264`, statically linking libx264 |
+| Licence | GPLv3, SPDX `GPL-3.0-or-later`; built `--enable-gpl --enable-version3 --enable-libx264`, statically linking libx264 |
 | Source reference | <https://github.com/FFmpeg/FFmpeg/commit/74e4393595> |
 | Bundling approval | `approved_for_bundling: false` |
 | Where the app looks | `<DATA_ROOT>\tools\ffmpeg\bin`; the wizard verifies bytes, it does not execute them |

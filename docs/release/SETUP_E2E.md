@@ -159,7 +159,8 @@ Temporary root deliberately has no `tools/ffmpeg/bin`.
 Temporary root has the real `ffmpeg.exe` and `ffprobe.exe` under `tools/ffmpeg/bin`.
 
 - Status: FFmpeg present (`state=ok`) but `verified=false` with no record; detail says
-  integrity is unverified until `/verify` runs; `media.ffmpeg=ok`; no required check fails.
+  integrity is unverified and the binary is not run until `/verify` succeeds; `media.ffmpeg=ok`;
+  no required check fails.
 - Verify with an empty body (discovery): HTTP 200, `ok=true`, discovered the app-path copy,
   hash and size equal the pins.
 - Status then reports verified.
@@ -264,8 +265,8 @@ Causal chain (all verified):
 2. `app/backend/src/creatoros/main.py:481-503` (split at lines 499-502) normalizes every
    HTTPException into one envelope, splitting a `"CODE: message"` detail into
    `{code: "REQUIRED_CHECKS_FAILING", message: "media.ffmpeg", correlation_id: ...}`.
-   The wire message is the bare ids; the code is a separate field. This is the documented
-   backend contract.
+   The wire message is the bare ids; the code is a separate field and repair guidance is
+   `details.guidance` (not appended to the id list). This is the documented backend contract.
 3. `app/desktop/src/api.ts:15-20` constructs `ApiRequestError` with
    `message = "media.ffmpeg"` and `code = "REQUIRED_CHECKS_FAILING"`.
 4. `app/desktop/src/setupModel.ts:278-296` defines

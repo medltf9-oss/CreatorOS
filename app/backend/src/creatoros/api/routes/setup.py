@@ -15,6 +15,8 @@ from ...core.settings import Settings, get_settings
 from ...schemas.setup import (
     CompleteRequest,
     CompleteResponse,
+    ConsentRequest,
+    ConsentResponse,
     PrerequisiteCatalog,
     PrerequisiteState,
     SetupCheck,
@@ -58,7 +60,7 @@ def _search_dirs(root: Path) -> list[Path]:
 
 def _local_path(component: Component, settings: Settings) -> Path:
     """Where this component is expected on disk, using the same resolution the backend really uses."""
-    if component.id == "ffmpeg":
+    if component.id in {"ffmpeg", "ffprobe"}:
         return settings.ffmpeg_bin / component.filename
     relative = str(component.acquisition.get("relative_to") or "")
     return settings.root / relative / component.filename if relative else settings.root / component.filename
@@ -72,6 +74,29 @@ def _pinned_version_note(component: Component, installed: str | None) -> str:
     if installed == pinned:
         return f"version {installed} matches the pinned {pinned}"
     return f"version {installed} does not match the pinned {pinned}"
+
+
+def _pinned_local_presence(component: Component, path: Path, version: str | None) -> tuple[str, str, str | None]:
+    """A size match is never a verification; only /verify reads bytes and records a hash."""
+    expected = component.size_bytes
+    try:
+        actual = path.stat().st_size
+    except OSError as exc:
+        return "unverified", f"could not read the size of {path}: {type(exc).__name__}: {exc}", str(path)
+    if expected is not None and actual != expected:
+        return (
+            "unverified",
+            f"{actual} bytes at {path}, but the pinned build is {expected} bytes",
+            str(path),
+        )
+    return (
+        "ok",
+        (
+            f"present at {path} ({version or 'not executed'}); the size matches the pinned build, "
+            "but integrity is unverified and the binary is not run until /verify succeeds"
+        ),
+        str(path),
+    )
 
 
 def _presence(
@@ -95,26 +120,13 @@ def _presence(
     if component.id == "ffmpeg":
         if not ffmpeg.present:
             return "missing", ffmpeg.error or "ffmpeg.exe is not present", None
-        expected = component.size_bytes
-        try:
-            actual = Path(str(ffmpeg.path)).stat().st_size
-        except OSError as exc:
-            return "unverified", f"could not read the size of {ffmpeg.path}: {type(exc).__name__}: {exc}", ffmpeg.path
-        if expected is not None and actual != expected:
-            return (
-                "unverified",
-                f"{actual} bytes at {ffmpeg.path}, but the pinned build is {expected} bytes",
-                ffmpeg.path,
-            )
-        # A size match is not a verification. Only /verify reads the bytes and records a hash.
-        return (
-            "ok",
-            (
-                f"present at {ffmpeg.path} ({ffmpeg.version or 'version unreadable'}); the size matches the "
-                "pinned build, but integrity is unverified until /verify runs"
-            ),
-            ffmpeg.path,
-        )
+        return _pinned_local_presence(component, Path(str(ffmpeg.path)), ffmpeg.version)
+
+    if component.id == "ffprobe":
+        path = _local_path(component, settings)
+        if not path.is_file():
+            return "missing", f"ffprobe.exe is not present at {path}", None
+        return _pinned_local_presence(component, path, None)
 
     if component.acquisition.get("mode") == "local":
         path = _local_path(component, settings)
@@ -132,6 +144,7 @@ def _component_state(
     ffmpeg: detection.FfmpegFacts,
     settings: Settings,
     verification_record: dict | None = None,
+    consent_record: dict | None = None,
 ) -> PrerequisiteState:
     state, detail, local = _presence(component, ollama=ollama, ffmpeg=ffmpeg, settings=settings)
     verification: SetupVerification | None = None
@@ -174,7 +187,11 @@ def _component_state(
         redistribution_detail=str(component.redistribution.get("detail") or ""),
         download_url=component.download_url,
         release_page=component.release_page,
+        source_url=component.acquisition.get("source"),
         consent_required=component.needs_consent,
+        consent_summary=str(component.consent.get("summary") or ""),
+        consent_accepted=bool(consent_record and consent_record.get("accepted")),
+        consent_recorded_at=(str(consent_record.get("recorded_at")) if consent_record else None),
     )
 
 
@@ -201,9 +218,23 @@ def _checks(
     if not ffmpeg.present:
         checks.append(SetupCheck(id="media.ffmpeg", state="fail", detail="no ffmpeg.exe; media features cannot run"))
     elif not ffmpeg.ffprobe_present:
-        checks.append(SetupCheck(id="media.ffmpeg", state="warn", detail="ffmpeg is present but ffprobe is missing"))
+        # ffprobe is required for duration/probe facts; a media check that passes without it is
+        # exactly the presence-only claim D-7 rejects. Completion can still be overridden explicitly.
+        checks.append(
+            SetupCheck(
+                id="media.ffmpeg",
+                state="fail",
+                detail="ffmpeg.exe is present but ffprobe.exe is missing; verify both pinned binaries",
+            )
+        )
     else:
-        checks.append(SetupCheck(id="media.ffmpeg", state="ok", detail=ffmpeg.version or "present"))
+        checks.append(
+            SetupCheck(
+                id="media.ffmpeg",
+                state="ok",
+                detail="ffmpeg.exe and ffprobe.exe are present but not executed; verify both pinned binaries before use",
+            )
+        )
 
     checks.append(
         SetupCheck(
@@ -292,6 +323,7 @@ def setup_status(session: DbSession) -> SetupStatus:
     disk = detection.disk_facts(settings.root)
     recorded = state_service.read_state(session)
     verifications = state_service.read_verifications(session)
+    consents = state_service.read_consents(session)
     completed = bool(recorded and recorded.get("completed"))
     completed_version = (
         str(recorded.get("completed_version") or recorded.get("version"))
@@ -314,6 +346,7 @@ def setup_status(session: DbSession) -> SetupStatus:
                 ffmpeg=ffmpeg,
                 settings=settings,
                 verification_record=verifications.get(component.id),
+                consent_record=consents.get(component.id),
             )
             for component in manifest.components
         ]
@@ -377,6 +410,7 @@ def prerequisites(session: DbSession) -> PrerequisiteCatalog:
     ollama = detection.detect_ollama(settings.ollama_url)
     ffmpeg = detection.detect_ffmpeg(settings)
     verifications = state_service.read_verifications(session)
+    consents = state_service.read_consents(session)
     return PrerequisiteCatalog(
         manifest_schema=manifest.schema,
         updated=manifest.updated,
@@ -388,10 +422,63 @@ def prerequisites(session: DbSession) -> PrerequisiteCatalog:
                 ffmpeg=ffmpeg,
                 settings=settings,
                 verification_record=verifications.get(component.id),
+                consent_record=consents.get(component.id),
             )
             for component in manifest.components
         ],
         manifest_error=None,
+    )
+
+
+@router.post(
+    "/prerequisites/{component_id}/consent",
+    response_model=ConsentResponse,
+    summary="Record the user's explicit consent decision before a download",
+)
+def record_prerequisite_consent(
+    component_id: str,
+    body: ConsentRequest,
+    session: DbSession,
+    audit: Audit,
+) -> ConsentResponse:
+    manifest, manifest_error = _manifest()
+    if manifest is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, f"MANIFEST_INVALID: {manifest_error}")
+    try:
+        component = manifest.get(component_id)
+    except KeyError:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            f"UNKNOWN_COMPONENT: no prerequisite named {component_id!r}",
+        ) from None
+    if not component.needs_consent:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"NO_CONSENT_REQUIRED: {component_id} is acquired without a network download",
+        )
+    record = state_service.record_consent(
+        session,
+        component.id,
+        accepted=body.accepted,
+        version=component.version,
+        sha256=component.sha256,
+    )
+    audit.record(
+        "setup.prerequisite.consent",
+        resource_type="prerequisite",
+        resource_id=component.id,
+        outcome="accepted" if body.accepted else "declined",
+        metadata={
+            "accepted": body.accepted,
+            "version": component.version,
+            "sha256": component.sha256,
+            "download_url": component.download_url,
+        },
+    )
+    return ConsentResponse(
+        component_id=component.id,
+        accepted=bool(record["accepted"]),
+        recorded_at=str(record["recorded_at"]),
     )
 
 
@@ -425,14 +512,16 @@ def verify_prerequisite(
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "PATH_NOT_ABSOLUTE: pass a full path")
     else:
         found = verify_service.find_candidate(component, _search_dirs(settings.root))
-        if found is None and component.acquisition.get("mode") == "local":
-            candidate = _local_path(component, settings)
-            found = candidate if candidate.is_file() else None
+        candidate = _local_path(component, settings) if component.acquisition.get("mode") == "local" else None
+        if found is None and candidate is not None and candidate.is_file():
+            found = candidate
         if found is None:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                f"NO_LOCAL_FILE: {component.filename or component.id} was not found in Downloads, Desktop or the data root",
-            )
+            detail = f"NO_LOCAL_FILE: expected {candidate or component.filename or component.id}"
+            source = str(component.acquisition.get("source") or "").strip()
+            if source:
+                detail += f"; pinned official source: {source}"
+            detail += "; download it, then choose that file to verify its pinned SHA-256"
+            raise HTTPException(status.HTTP_409_CONFLICT, detail)
         target = found
 
     try:
@@ -494,10 +583,30 @@ def complete_setup(body: CompleteRequest, session: DbSession, audit: Audit) -> C
     )
     failures = _required_check_failures(checks, skipped_ai=body.skipped_ai)
     if failures and not body.override_required_checks:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            f"REQUIRED_CHECKS_FAILING: {', '.join(failures)}",
-        )
+        # Keep the machine-readable check-id list in "message": the desktop parser splits it on
+        # commas/whitespace. Put the repair guidance in "details.guidance" instead of appending
+        # prose to the id list, which would otherwise become fake check ids in the wizard.
+        guidance: list[str] = []
+        if "media.ffmpeg" in failures:
+            media_dir = settings.root / "tools" / "ffmpeg" / "bin"
+            guidance.append(
+                f"Place both pinned binaries under {media_dir}, then run Verify; "
+                "or override with a recorded reason."
+            )
+            if manifest is not None:
+                try:
+                    source = str(manifest.get("ffmpeg").acquisition.get("source") or "").strip()
+                except KeyError:
+                    source = ""
+                if source:
+                    guidance.append(f"Pinned official source: {source}")
+        detail: dict[str, object] = {
+            "code": "REQUIRED_CHECKS_FAILING",
+            "message": ", ".join(failures),
+        }
+        if guidance:
+            detail["guidance"] = " ".join(guidance)
+        raise HTTPException(status.HTTP_409_CONFLICT, detail)
 
     existing = state_service.read_state(session)
     recorded = state_service.mark_complete(
@@ -520,6 +629,7 @@ def complete_setup(body: CompleteRequest, session: DbSession, audit: Audit) -> C
             "completed_version": completed_version,
             "override_required_checks": bool(recorded.get("override_required_checks")),
             "failed_checks": failures,
+            "consents": state_service.read_consents(session),
         },
     )
     return CompleteResponse(

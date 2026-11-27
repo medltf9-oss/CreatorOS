@@ -23,6 +23,8 @@ SETTING_SCOPE = "app"
 VERIFICATION_KEY = "setup.verification"
 VERIFICATION_SCOPE = "app"
 VERIFICATION_LIMIT = 64
+CONSENT_KEY = "setup.consent"
+CONSENT_SCOPE = "app"
 
 
 def read_state(session: Session) -> dict[str, Any] | None:
@@ -122,6 +124,45 @@ def record_verification(session: Session, component_id: str, record: dict[str, A
     row = session.get(AppSetting, VERIFICATION_KEY)
     if row is None:
         row = AppSetting(key=VERIFICATION_KEY, value_json=value, scope=VERIFICATION_SCOPE)
+        session.add(row)
+    else:
+        row.value_json = value
+    session.flush()
+    return record
+
+
+def read_consents(session: Session) -> dict[str, dict[str, Any]]:
+    """Return the recorded consent decision per component, if any."""
+    row = session.get(AppSetting, CONSENT_KEY)
+    if row is None or not row.value_json:
+        return {}
+    payload = row.value_json.get("consents") if isinstance(row.value_json, dict) else None
+    if not isinstance(payload, dict):
+        return {}
+    return {str(key): dict(value) for key, value in payload.items() if isinstance(value, dict)}
+
+
+def record_consent(
+    session: Session,
+    component_id: str,
+    *,
+    accepted: bool,
+    version: str,
+    sha256: str,
+) -> dict[str, Any]:
+    """Record an explicit yes/no. A refusal is evidence too and is never overwritten by a pass."""
+    consents = read_consents(session)
+    record = {
+        "accepted": bool(accepted),
+        "recorded_at": datetime.now(UTC).isoformat(),
+        "version": str(version),
+        "sha256": str(sha256),
+    }
+    consents[component_id] = record
+    row = session.get(AppSetting, CONSENT_KEY)
+    value = {"schema": "creatoros.setup.consents.v1", "consents": consents}
+    if row is None:
+        row = AppSetting(key=CONSENT_KEY, value_json=value, scope=CONSENT_SCOPE)
         session.add(row)
     else:
         row.value_json = value

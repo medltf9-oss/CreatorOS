@@ -107,6 +107,24 @@ def run_inventory(
     sbom: Path | None = None,
 ) -> subprocess.CompletedProcess:
     command = [sys.executable, str(SCRIPT), "--payload", str(payload)]
+    manifest = payload.parent / f"{payload.name}.runtime-manifest.json"
+    if (payload / "python.exe").is_file():
+        generated = subprocess.run(
+            [
+                sys.executable,
+                str(REPO_ROOT / "scripts" / "runtime_manifest.py"),
+                "--write",
+                "--root",
+                str(payload),
+                "--manifest",
+                str(manifest),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert generated.returncode == 0, generated.stderr
+        command.extend(["--runtime-manifest", str(manifest)])
     if pyproject is None:
         command.append("--no-sbom")
     else:

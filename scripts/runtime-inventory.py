@@ -46,12 +46,17 @@ from email import policy
 from email.parser import BytesParser
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from runtime_manifest import RuntimeManifestError, load_manifest, verify_tree
+
 TOOL_VERSION = 1
 TOOL_NAME = "creatoros-runtime-inventory"
 
-DEFAULT_PAYLOAD = "releases/0.8.0/win-unpacked/resources/backend"
-DEFAULT_SBOM = "releases/0.8.0/sbom.cdx.json"
 DEFAULT_PYPROJECT = "app/backend/pyproject.toml"
+
+# The payload and SBOM are never defaulted to a product version. A stale 0.8.0 default can inspect
+# the wrong tree after a version change; the gate and every caller pass explicit paths.
+
 
 EXIT_OK = 0
 EXIT_FINDINGS = 1
@@ -521,13 +526,21 @@ def _classify_non_dist(relative: str) -> str:
 
 
 def _walk_payload(payload: Path) -> list[str]:
-    """Return every file path relative to the payload, sorted, POSIX style."""
+    """Return every file path relative to the payload, sorted, POSIX style.
+
+    A file can disappear or become unreadable while a concurrent build is finishing. That is an
+    incomplete inspection, not a policy finding: classify it as exit 2 so a truncated report can
+    never be read as a pass.
+    """
     paths: list[str] = []
-    for current, directories, files in os.walk(payload):
-        directories.sort()
-        files.sort()
-        for name in files:
-            paths.append((Path(current) / name).relative_to(payload).as_posix())
+    try:
+        for current, directories, files in os.walk(payload):
+            directories.sort()
+            files.sort()
+            for name in files:
+                paths.append((Path(current) / name).relative_to(payload).as_posix())
+    except OSError as error:
+        raise InventoryError(f"cannot walk payload {payload}: {type(error).__name__}: {error}") from error
     paths.sort()
     return paths
 
@@ -585,6 +598,7 @@ def build_inventory(
     pyproject_path: Path,
     sbom_path: Path | None,
     verify_hashes: bool = True,
+    runtime_manifest_path: Path | None = None,
 ) -> dict:
     payload = payload.resolve()
     if not payload.is_dir():
@@ -609,9 +623,30 @@ def build_inventory(
     file_bytes: dict[str, int] = {}
     total_bytes = 0
     for relative in payload_files:
-        size = (payload / relative).stat().st_size
+        try:
+            size = (payload / relative).stat().st_size
+        except OSError as error:
+            raise InventoryError(
+                f"cannot inspect payload file {relative}: {type(error).__name__}: {error}"
+            ) from error
         file_bytes[relative] = size
         total_bytes += size
+
+    runtime_manifest_path = runtime_manifest_path or (
+        repo_root / "app" / "backend" / "runtime-manifest.json"
+    )
+    if (payload / "python.exe").is_file():
+        try:
+            runtime_manifest = load_manifest(runtime_manifest_path)
+        except RuntimeManifestError as error:
+            raise InventoryError(str(error)) from error
+        runtime_manifest_sha256 = sha256_file(runtime_manifest_path)
+        runtime_manifest_findings = verify_tree(payload, runtime_manifest, strict_extras=True)
+    else:
+        # There is no interpreter to verify; the missing python.exe is reported as a payload error.
+        runtime_manifest = {"files": [], "python_version": None}
+        runtime_manifest_sha256 = ""
+        runtime_manifest_findings = []
 
     distributions: list[dict] = []
     violations: dict[str, list] = {
@@ -623,6 +658,7 @@ def build_inventory(
         "metadata_errors": [],
         "record_errors": [],
         "payload_errors": [],
+        "sbom_errors": [],
         "unrecorded_site_packages_files": [],
     }
     claimed: dict[str, dict] = {}
@@ -1019,6 +1055,37 @@ def build_inventory(
             },
         }
 
+    tree_digest = hashlib.sha256()
+    for relative in payload_files:
+        try:
+            file_hash = sha256_file(payload / relative)
+        except OSError as error:
+            raise InventoryError(
+                f"cannot hash payload file {relative}: {type(error).__name__}: {error}"
+            ) from error
+        tree_digest.update(relative.encode("utf-8") + b"\0" + file_hash.encode("ascii") + b"\n")
+
+    if sbom_path is not None:
+        product = sbom.get("metadata", {}).get("component", {})
+        properties = {
+            str(item.get("name")): str(item.get("value"))
+            for item in (product.get("properties") or [])
+            if isinstance(item, dict)
+        }
+        expected_tree = properties.get("creatoros:payload-tree-sha256")
+        expected_runtime = properties.get("creatoros:runtime-manifest-sha256")
+        sbom_comparison["payload_tree_matches"] = expected_tree == tree_digest.hexdigest()
+        sbom_comparison["runtime_manifest_matches"] = expected_runtime == runtime_manifest_sha256
+        sbom_comparison["source_commit"] = properties.get("creatoros:source-commit")
+        if not sbom_comparison["payload_tree_matches"]:
+            violations["sbom_errors"].append(
+                "artifact SBOM payload-tree-sha256 does not match the inspected payload"
+            )
+        if not sbom_comparison["runtime_manifest_matches"]:
+            violations["sbom_errors"].append(
+                "artifact SBOM runtime-manifest-sha256 does not match app/backend/runtime-manifest.json"
+            )
+
     dev_count = len(violations["dev_only_distributions"])
     causes: list[str] = []
     if violations["forbidden_distributions"]:
@@ -1038,6 +1105,12 @@ def build_inventory(
         causes.append(f"{len(violations['record_errors'])} RECORD problem(s)")
     if violations["payload_errors"]:
         causes.extend(violations["payload_errors"])
+    if runtime_manifest_findings:
+        causes.append(
+            f"{len(runtime_manifest_findings)} embedded interpreter/runtime mismatch(es) against runtime-manifest.json"
+        )
+    if violations["sbom_errors"]:
+        causes.extend(violations["sbom_errors"])
     if violations["unrecorded_site_packages_files"]:
         names = ", ".join(item["path"] for item in violations["unrecorded_site_packages_files"])
         causes.append(f"unrecorded site-packages file(s): {names}")
@@ -1088,10 +1161,6 @@ def build_inventory(
     for distribution in distributions:
         scope_counts[distribution["scope"]] += 1
 
-    tree_digest = hashlib.sha256()
-    for relative in payload_files:
-        file_hash = sha256_file(payload / relative)
-        tree_digest.update(relative.encode("utf-8") + b"\0" + file_hash.encode("ascii") + b"\n")
     provenance_complete = (
         not violations["unrecorded_site_packages_files"]
         and first_party_mismatch is None
@@ -1120,6 +1189,14 @@ def build_inventory(
             "first_party_version_mismatch": first_party_mismatch,
         },
         "interpreter": interpreter,
+        "runtime_manifest": {
+            "path": display_path(runtime_manifest_path, repo_root),
+            "python_version": runtime_manifest.get("python_version"),
+            "files": len(runtime_manifest.get("files") or []),
+            "sha256": runtime_manifest_sha256,
+            "findings": runtime_manifest_findings,
+            "ok": not runtime_manifest_findings,
+        },
         "distributions": distributions,
         "distribution_summary": {
             "count": len(distributions),
@@ -1244,6 +1321,18 @@ def render_markdown(report: dict) -> str:
     extensions = interpreter["extension_modules"]
     lines.append(f"- Extension modules: {extensions['count']} ({extensions['bytes']} bytes)")
     lines.append("- Authenticode: not-checked (this inventory does not verify signatures)")
+    runtime = report["runtime_manifest"]
+    lines.append("")
+    lines.append("## Embedded interpreter manifest")
+    lines.append("")
+    lines.append("- Source: `" + runtime["path"] + "`")
+    lines.append(f"- Python: {_dash(runtime['python_version'], 'unknown')}")
+    lines.append(f"- Manifested files: {runtime['files']}")
+    if runtime["ok"]:
+        lines.append("- Result: every interpreter/runtime file matches its committed SHA-256 and size; no extra .exe/.dll/.pyd")
+    else:
+        for finding in runtime["findings"]:
+            lines.append("- FINDING: " + finding)
     lines.append("")
     lines.append("## Shipped distributions")
     lines.append("")
@@ -1421,11 +1510,16 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Inventory the packaged CreatorOS backend runtime.",
     )
-    parser.add_argument("--payload", default=DEFAULT_PAYLOAD)
+    parser.add_argument("--payload", required=True, help="packaged backend payload to inspect")
     parser.add_argument("--repo-root", default=None)
     parser.add_argument("--pyproject", default=DEFAULT_PYPROJECT)
-    parser.add_argument("--sbom", default=DEFAULT_SBOM)
+    parser.add_argument("--sbom", default=None, help="artifact SBOM to compare; omit to skip")
     parser.add_argument("--no-sbom", action="store_true")
+    parser.add_argument(
+        "--runtime-manifest",
+        default=None,
+        help="interpreter manifest; default: app/backend/runtime-manifest.json",
+    )
     parser.add_argument("--json-out", default=None)
     parser.add_argument("--markdown-out", default=None)
     parser.add_argument("--json", action="store_true", help="print JSON to stdout")
@@ -1439,7 +1533,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     payload = _resolve(repo_root, arguments.payload)
     pyproject = _resolve(repo_root, arguments.pyproject)
-    sbom = None if arguments.no_sbom else _resolve(repo_root, arguments.sbom)
+    sbom = None if arguments.no_sbom or not arguments.sbom else _resolve(repo_root, arguments.sbom)
+    runtime_manifest = (
+        _resolve(repo_root, arguments.runtime_manifest) if arguments.runtime_manifest else None
+    )
 
     try:
         report = build_inventory(
@@ -1448,6 +1545,7 @@ def main(argv: list[str] | None = None) -> int:
             pyproject_path=pyproject,
             sbom_path=sbom,
             verify_hashes=not arguments.no_verify_hashes,
+            runtime_manifest_path=runtime_manifest,
         )
     except InventoryError as error:
         print(f"runtime-inventory: {error}", file=sys.stderr)

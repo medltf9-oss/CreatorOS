@@ -8,8 +8,8 @@ prerequisites manifest named with --prerequisites: the desktop version from app/
 the backend version from app/backend/pyproject.toml, Apache-2.0 from LICENSE, Node versions and pnpm
 integrity digests from app/desktop/pnpm-lock.yaml, Python distributions from app/backend/.venv (the
 tested environment) or pyproject specifiers when it is absent, the FFmpeg binaries from
-tools/ffmpeg/bin with SHA-256 computed from their real
-bytes and versions read from their real -version banner, and Ollama only when a prerequisites manifest
+tools/ffmpeg/bin with SHA-256 computed from their real bytes and versions taken from the
+prerequisites manifest (the binary is never executed), and Ollama only when a prerequisites manifest
 declares it. A component that cannot be collected is never invented: it is left out and the reason is
 recorded in a creatoros:collection-error property.
 
@@ -36,7 +36,7 @@ Failure policy
 Structural inputs are required and fail with exit code 2: a missing or version-less desktop
 package.json, an unparseable or version-less app/backend/pyproject.toml, a missing or inconsistent
 pnpm lockfile, or a --prerequisites file that cannot be read or parsed. External payloads are optional:
-a missing FFmpeg binary, an unreadable -version banner, an absent virtual environment, or incomplete
+a missing FFmpeg binary, a missing manifest version, an absent virtual environment, or incomplete
 Ollama metadata do not fail the run, but each one is recorded explicitly in a
 creatoros:collection-error property so the document states what is missing. A missing or unrecognised
 LICENSE records creatoros:license-status=unknown instead of guessing.
@@ -76,7 +76,7 @@ NODE_LICENCES_PATH = Path('app') / 'desktop' / 'third-party-licenses.json'
 PYPROJECT_PATH = Path('app') / 'backend' / 'pyproject.toml'
 VENV_PATH = Path('app') / 'backend' / '.venv'
 FFMPEG_DIR = Path('tools') / 'ffmpeg' / 'bin'
-MANIFEST_PATH = Path('docs') / 'release' / 'DEPENDENCY_MANIFEST.md'
+PREREQUISITES_PATH = Path('app/backend/src/creatoros/resources/prerequisites.v1.json')
 PREREQUISITES_SCHEMA = 'creatoros.prerequisites.v1'
 PROFILES = frozenset({'source', 'prerequisites', 'artifact', 'all'})
 
@@ -111,10 +111,10 @@ KNOWN_SPDX_LICENCES = frozenset({
 _HASH_LENGTHS = {'SHA-256': 64, 'SHA-384': 96, 'SHA-512': 128, 'SHA-1': 40, 'MD5': 32}
 _REQUIREMENT = re.compile(r'^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[([^\]]*)\])?\s*(.*)$')
 _SPDX_TOKEN = re.compile(r'[A-Za-z0-9.+-]+')
-_VERSION_FROM_BANNER = re.compile(r'(?:^|\s)version\s+(\S+)')
 _INTEGRITY_IN_FLOW = re.compile(r'integrity\s*:\s*([^,}\s]+)')
 _MARKER_EXTRA = re.compile(r"extra\s*==\s*['\"]([^'\"]+)['\"]")
 _HEX = re.compile(r'^[0-9a-f]+$')
+SOURCE_COMMIT_RE = re.compile(r'^[0-9a-f]{40}$')
 
 
 class SbomError(RuntimeError):
@@ -921,100 +921,47 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _binary_version(path: Path) -> str | None:
-    try:
-        completed = subprocess.run(
-            [str(path), '-version'],
-            capture_output=True,
-            text=True,
-            encoding='utf-8',
-            errors='replace',
-            timeout=30,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    for line in (completed.stdout or '').splitlines():
-        if line.strip():
-            match = _VERSION_FROM_BANNER.search(line)
-            return match.group(1) if match else None
-    return None
-
-
-def _plain_markdown(value: str) -> str:
-    return value.replace('**', '').replace('`', '').strip()
-
-
-def _manifest_sections(repo_root: Path) -> dict[str, dict[str, str]] | None:
-    path = repo_root / MANIFEST_PATH
-    if not path.is_file():
-        return None
-    try:
-        text = path.read_text(encoding='utf-8-sig')
-    except (OSError, UnicodeDecodeError):
-        return None
-    sections: dict[str, dict[str, str]] = {}
-    current: str | None = None
-    for line in text.splitlines():
-        if line.startswith('### '):
-            current = line[4:].strip().lower()
-            sections.setdefault(current, {})
-        elif line.startswith('#'):
-            current = None
-        elif current is not None and line.lstrip().startswith('|'):
-            cells = [cell.strip() for cell in line.strip().strip('|').split('|')]
-            if len(cells) < 2:
-                continue
-            field = _plain_markdown(cells[0]).lower()
-            if not field or set(field) <= {'-', ':', ' '}:
-                continue
-            sections[current][field] = ' '.join(cells[1].split())
-    return sections
-
-
-def collect_bundled_components(repo_root: Path) -> tuple[list[dict[str, Any]], list[str]]:
-    """Return FFmpeg/ffprobe components, hashed from the real binaries and described by the manifest."""
+def collect_bundled_components(
+    repo_root: Path, prerequisites: Path | None = None
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Return ffmpeg/ffprobe hashed from the real binaries and declared by the same manifest."""
+    entries = _prerequisite_tool_entries(repo_root, prerequisites)
     components: list[dict[str, Any]] = []
     errors: list[str] = []
-    sections = _manifest_sections(repo_root)
-    ffmpeg_rows = (sections or {}).get('ffmpeg and ffprobe')
-    declaration = ''
-    redistribution = ''
-    licence_name = ''
-    manifest_hashes: dict[str, str] = {}
-    if ffmpeg_rows is None:
-        errors.append(
-            'docs/release/DEPENDENCY_MANIFEST.md is missing or has no FFmpeg and ffprobe section; '
-            'the licence and redistribution status are not recorded'
-        )
-    else:
-        declaration = _plain_markdown(ffmpeg_rows.get('licence', ''))
-        redistribution = _plain_markdown(ffmpeg_rows.get('redistribution status', ''))
-        licence_name = declaration.split(' ', 1)[0].strip(' (),') if declaration else ''
-        for field, value in ffmpeg_rows.items():
-            if field.endswith('sha-256'):
-                manifest_hashes[field] = _plain_markdown(value).lower()
-        if not declaration:
-            errors.append('docs/release/DEPENDENCY_MANIFEST.md records no FFmpeg licence')
-        if not redistribution:
-            errors.append('docs/release/DEPENDENCY_MANIFEST.md records no FFmpeg redistribution status')
     for binary in ('ffmpeg', 'ffprobe'):
+        entry = entries.get(binary)
+        if entry is None:
+            errors.append(f'prerequisites manifest has no {binary} component')
+            continue
+        acquisition = entry.get('acquisition') if isinstance(entry.get('acquisition'), dict) else {}
+        license_block = entry.get('license') if isinstance(entry.get('license'), dict) else {}
+        redistribution = (
+            entry.get('redistribution') if isinstance(entry.get('redistribution'), dict) else {}
+        )
+        pinned_version = str(entry.get('version') or '').strip()
+        expected_digest = str(acquisition.get('sha256') or '').strip().lower()
+        if not _is_sha256_hex(expected_digest):
+            errors.append(f'prerequisites manifest has no valid {binary} SHA-256')
+            continue
         path = repo_root / FFMPEG_DIR / f'{binary}.exe'
         relative = f'{FFMPEG_DIR.as_posix()}/{binary}.exe'
         if not path.is_file():
             errors.append(f'{relative} not found; no {binary} component was recorded')
             continue
-        version = _binary_version(path)
-        if not version:
-            errors.append(
-                f'{relative} did not report a version from its -version banner; '
-                f'no {binary} component was recorded'
-            )
-            continue
+        # Never execute the binary here. Its bytes are hashed and compared with the pin; the
+        # declared manifest version is the only version source, so a dropped/replaced executable
+        # cannot gain code execution during SBOM generation (D-7).
+        version = pinned_version or 'unknown'
+        if not pinned_version:
+            errors.append(f'prerequisites manifest has no {binary} version')
         digest = _sha256_file(path)
         properties: list[dict[str, str]] = [
             {'name': 'creatoros:binary-path', 'value': relative},
-            {'name': 'creatoros:version-source', 'value': f'{relative} -version'},
+            {'name': 'creatoros:version-source', 'value': 'prerequisites manifest'},
+            {
+                'name': 'creatoros:source',
+                'value': _display_path(prerequisites or repo_root / PREREQUISITES_PATH, repo_root),
+            },
             {
                 'name': 'creatoros:scope-reason',
                 'value': (
@@ -1031,27 +978,24 @@ def collect_bundled_components(repo_root: Path) -> tuple[list[dict[str, Any]], l
             'scope': 'excluded',
             'hashes': [{'alg': 'SHA-256', 'content': digest}],
         }
+        licence_name = str(license_block.get('spdx') or license_block.get('name') or '').strip()
         if licence_name:
             component['licenses'] = [{'license': {'name': licence_name}}]
-            properties.append({
-                'name': 'creatoros:license-source',
-                'value': MANIFEST_PATH.as_posix(),
-            })
-            properties.append({'name': 'creatoros:license-declaration', 'value': declaration})
+            properties.append({'name': 'creatoros:license-source', 'value': 'prerequisites manifest'})
         else:
             properties.append({'name': 'creatoros:license-status', 'value': 'unknown'})
-        if redistribution:
-            properties.append({'name': 'creatoros:redistribution-status', 'value': redistribution})
-        declared_digest = manifest_hashes.get(f'{binary}.exe sha-256')
-        if declared_digest:
-            if declared_digest != digest:
-                message = (
-                    f'{relative} SHA-256 {digest} does not match the manifest value {declared_digest}'
-                )
-                errors.append(message)
-                properties.append({'name': 'creatoros:collection-error', 'value': message})
-            else:
-                properties.append({'name': 'creatoros:manifest-sha256', 'value': declared_digest})
+        detail = str(redistribution.get('detail') or '').strip()
+        if detail:
+            properties.append({'name': 'creatoros:redistribution-status', 'value': detail})
+        if expected_digest != digest:
+            message = (
+                f'{relative} SHA-256 {digest} does not match the prerequisites manifest value '
+                f'{expected_digest}'
+            )
+            errors.append(message)
+            properties.append({'name': 'creatoros:collection-error', 'value': message})
+        else:
+            properties.append({'name': 'creatoros:manifest-sha256', 'value': expected_digest})
         component['properties'] = _sorted_properties(properties)
         components.append(component)
     return components, errors
@@ -1088,6 +1032,7 @@ def _declared_ollama(data: dict[str, Any], manifest: Path) -> dict[str, Any] | N
                 'size': acquisition.get('size_bytes'),
                 'signer_subject': signature.get('expected_subject'),
                 'licence': licence.get('spdx') or licence.get('name'),
+                'redistribution': entry.get('redistribution'),
                 'source': 'creatoros.prerequisites.v1',
             }
         return None
@@ -1159,21 +1104,14 @@ def collect_prerequisite_components(
         })
     else:
         properties.append({'name': 'creatoros:license-status', 'value': 'unknown'})
-    sections = _manifest_sections(repo_root) or {}
-    ollama_rows = sections.get('ollama') or {}
-    if ollama_rows:
-        status = _plain_markdown(ollama_rows.get('redistribution status', ''))
-        if status:
-            properties.append({'name': 'creatoros:redistribution-status', 'value': status})
-        repo_version = _plain_markdown(ollama_rows.get('version', ''))
-        if repo_version and repo_version != version:
-            errors.append(
-                f'prerequisites manifest version {version} differs from '
-                f'DEPENDENCY_MANIFEST.md {repo_version}'
-            )
-        repo_digest = _plain_markdown(ollama_rows.get('sha-256', '')).lower()
-        if repo_digest and repo_digest != digest:
-            errors.append('prerequisites manifest Ollama SHA-256 differs from DEPENDENCY_MANIFEST.md')
+    redistribution = (
+        declaration.get('redistribution')
+        if isinstance(declaration.get('redistribution'), dict)
+        else {}
+    )
+    detail = str(redistribution.get('detail') or '').strip()
+    if detail:
+        properties.append({'name': 'creatoros:redistribution-status', 'value': detail})
     component['properties'] = _sorted_properties(properties)
     return [component], errors
 
@@ -1205,41 +1143,67 @@ def _application_component(
     return component
 
 
-def _declared_ffmpeg_components(repo_root: Path) -> tuple[list[dict[str, Any]], list[str]]:
-    """Return ffmpeg/ffprobe from the audit record, without reading a local binary.
+def _prerequisite_tool_entries(
+    repo_root: Path, prerequisites: Path | None
+) -> dict[str, dict[str, Any]]:
+    """Return the ffmpeg and ffprobe entries from the one committed prerequisites manifest."""
+    manifest = prerequisites if prerequisites is not None else repo_root / PREREQUISITES_PATH
+    if not manifest.is_file():
+        raise SbomError(f'prerequisites manifest not found: {manifest}')
+    data = _read_json(manifest, 'prerequisites manifest')
+    if data.get('schema') != PREREQUISITES_SCHEMA:
+        raise SbomError(
+            f'prerequisites manifest {manifest} declares unsupported schema {data.get("schema")!r}'
+        )
+    components = data.get('components')
+    if not isinstance(components, list):
+        raise SbomError(f'prerequisites manifest {manifest} has no components list')
+    return {
+        str(entry.get('id')): entry
+        for entry in components
+        if isinstance(entry, dict) and entry.get('id') in {'ffmpeg', 'ffprobe'}
+    }
+
+
+def _declared_ffmpeg_components(
+    repo_root: Path, prerequisites: Path | None = None
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Return ffmpeg/ffprobe from the prerequisites manifest, without reading a local binary.
 
     This is the prerequisite profile: it must be reproducible on a machine that has not downloaded
-    the tools, and it records the declared hashes and licence status rather than re-hashing bytes
-    that may be absent. The artifact profile still checks the real binaries.
+    the tools. The manifest is the only source of digests, version, licence and redistribution
+    status; the artifact profile checks the same declarations against the real bytes.
     """
-    sections = _manifest_sections(repo_root) or {}
-    rows = sections.get('ffmpeg and ffprobe')
-    if not rows:
-        return [], [
-            'docs/release/DEPENDENCY_MANIFEST.md has no FFmpeg and ffprobe section; '
-            + 'no prerequisite component was recorded'
-        ]
-    version = _plain_markdown(rows.get('version', '')) or 'unknown'
-    licence_declaration = _plain_markdown(rows.get('licence', ''))
-    redistribution = _plain_markdown(rows.get('redistribution status', ''))
-    licence_name = licence_declaration.split(' ', 1)[0].strip(' (),') if licence_declaration else ''
-    errors: list[str] = []
-    if not licence_declaration:
-        errors.append('DEPENDENCY_MANIFEST.md records no FFmpeg licence')
-    if not redistribution:
-        errors.append('DEPENDENCY_MANIFEST.md records no FFmpeg redistribution status')
+    entries = _prerequisite_tool_entries(repo_root, prerequisites)
     components: list[dict[str, Any]] = []
+    errors: list[str] = []
     for binary in ('ffmpeg', 'ffprobe'):
-        digest = _plain_markdown(rows.get(f'{binary}.exe sha-256', '')).lower()
+        entry = entries.get(binary)
+        if entry is None:
+            errors.append(f'prerequisites manifest has no {binary} component')
+            continue
+        acquisition = entry.get('acquisition') if isinstance(entry.get('acquisition'), dict) else {}
+        license_block = entry.get('license') if isinstance(entry.get('license'), dict) else {}
+        redistribution = (
+            entry.get('redistribution') if isinstance(entry.get('redistribution'), dict) else {}
+        )
+        version = str(entry.get('version') or '').strip()
+        digest = str(acquisition.get('sha256') or '').strip().lower()
+        if not version:
+            errors.append(f'prerequisites manifest has no {binary} version')
+            continue
         if not _is_sha256_hex(digest):
-            errors.append(f'DEPENDENCY_MANIFEST.md has no valid {binary}.exe SHA-256')
+            errors.append(f'prerequisites manifest has no valid {binary} SHA-256')
             continue
         properties: list[dict[str, str]] = [
-            {'name': 'creatoros:source', 'value': MANIFEST_PATH.as_posix()},
-            {'name': 'creatoros:version-source', 'value': MANIFEST_PATH.as_posix()},
+            {
+                'name': 'creatoros:source',
+                'value': _display_path(prerequisites or repo_root / PREREQUISITES_PATH, repo_root),
+            },
+            {'name': 'creatoros:version-source', 'value': 'prerequisites manifest'},
             {
                 'name': 'creatoros:scope-reason',
-                'value': 'external prerequisite declared by the dependency audit record; not bundled',
+                'value': 'external prerequisite declared by the prerequisites manifest; not bundled',
             },
         ]
         component: dict[str, Any] = {
@@ -1250,15 +1214,15 @@ def _declared_ffmpeg_components(repo_root: Path) -> tuple[list[dict[str, Any]], 
             'scope': 'excluded',
             'hashes': [{'alg': 'SHA-256', 'content': digest}],
         }
+        licence_name = str(license_block.get('spdx') or license_block.get('name') or '').strip()
         if licence_name:
             component['licenses'] = [{'license': {'name': licence_name}}]
-            properties.append(
-                {'name': 'creatoros:license-declaration', 'value': licence_declaration}
-            )
+            properties.append({'name': 'creatoros:license-source', 'value': 'prerequisites manifest'})
         else:
             properties.append({'name': 'creatoros:license-status', 'value': 'unknown'})
-        if redistribution:
-            properties.append({'name': 'creatoros:redistribution-status', 'value': redistribution})
+        detail = str(redistribution.get('detail') or '').strip()
+        if detail:
+            properties.append({'name': 'creatoros:redistribution-status', 'value': detail})
         component['properties'] = _sorted_properties(properties)
         components.append(component)
     return components, errors
@@ -1306,7 +1270,7 @@ def collect_components(
         ),
     ]
     if profile == 'prerequisites':
-        ffmpeg_components, ffmpeg_errors = _declared_ffmpeg_components(repo_root)
+        ffmpeg_components, ffmpeg_errors = _declared_ffmpeg_components(repo_root, prerequisites)
         ollama_components, ollama_errors = collect_prerequisite_components(repo_root, prerequisites)
         components = ffmpeg_components + ollama_components
         errors.extend(ffmpeg_errors)
@@ -1367,9 +1331,9 @@ def collect_components(
                 )
         components.extend(payload_components)
         # The installer does not carry FFmpeg or Ollama. The artifact document binds the bytes it
-        # does carry and describes the external prerequisites from the audit record, exactly as the
-        # prerequisite document does, so the source inventory is a subset of the artifact inventory.
-        ffmpeg_components, ffmpeg_errors = _declared_ffmpeg_components(repo_root)
+        # does carry, hashes the local ffmpeg/ffprobe bytes against the one prerequisites manifest,
+        # and declares the Ollama installer from that same manifest.
+        ffmpeg_components, ffmpeg_errors = collect_bundled_components(repo_root, prerequisites)
         prerequisite_components, prerequisite_errors = collect_prerequisite_components(
             repo_root, prerequisites
         )
@@ -1381,7 +1345,7 @@ def collect_components(
     python_components, python_errors = collect_python_components(repo_root, pyproject)
     components.extend(python_components)
     errors.extend(python_errors)
-    bundled_components, bundled_errors = collect_bundled_components(repo_root)
+    bundled_components, bundled_errors = collect_bundled_components(repo_root, prerequisites)
     prerequisite_components, prerequisite_errors = collect_prerequisite_components(
         repo_root, prerequisites
     )
@@ -1423,17 +1387,22 @@ def _component_sort_key(component: dict[str, Any]) -> tuple[str, str, str, str]:
     )
 
 
-def compute_serial(components: Sequence[dict[str, Any]]) -> str:
-    """Return the UUIDv5 serial derived from the canonical sorted component list."""
+def compute_serial(
+    components: Sequence[dict[str, Any]], extra: dict[str, Any] | None = None
+) -> str:
+    """Return the UUIDv5 serial derived from the sorted components and binding facts."""
     ordered = sorted(components, key=_component_sort_key)
-    payload = json.dumps(ordered, sort_keys=True, ensure_ascii=False, separators=(',', ':'))
+    binding = {'components': ordered, 'binding': extra or {}}
+    payload = json.dumps(binding, sort_keys=True, ensure_ascii=False, separators=(',', ':'))
     return 'urn:uuid:' + str(uuid.uuid5(SERIAL_NAMESPACE, payload))
 
 
-def normalise_serial(serial: str | None, components: Sequence[dict[str, Any]]) -> str:
+def normalise_serial(
+    serial: str | None, components: Sequence[dict[str, Any]], extra: dict[str, Any] | None = None
+) -> str:
     """Return a urn:uuid serial, either the given UUID or the derived UUIDv5."""
     if serial is None:
-        return compute_serial(components)
+        return compute_serial(components, extra)
     candidate = serial.strip()
     if candidate.lower().startswith('urn:uuid:'):
         candidate = candidate[len('urn:uuid:'):]
@@ -1455,6 +1424,8 @@ def build_document(
     serial: str | None = None,
     artifact: tuple[str, str, int] | None = None,
     payload: tuple[str, int, int] | None = None,
+    runtime: tuple[str, str, int] | None = None,
+    source_commit: str | None = None,
 ) -> dict[str, Any]:
     """Build the CycloneDX 1.5 document; components are sorted by (type, name, version)."""
     ordered = sorted(
@@ -1485,6 +1456,8 @@ def build_document(
         product_properties.append(
             {'name': 'creatoros:artifact-size-bytes', 'value': str(artifact_size)}
         )
+    if source_commit is not None:
+        product_properties.append({'name': 'creatoros:source-commit', 'value': source_commit})
     if payload is not None:
         payload_hash, payload_files, payload_bytes = payload
         product_properties.append(
@@ -1496,12 +1469,23 @@ def build_document(
         product_properties.append(
             {'name': 'creatoros:payload-bytes', 'value': str(payload_bytes)}
         )
+    if runtime is not None:
+        runtime_path, runtime_hash, runtime_files = runtime
+        product_properties.append({'name': 'creatoros:runtime-manifest', 'value': runtime_path})
+        product_properties.append(
+            {'name': 'creatoros:runtime-manifest-sha256', 'value': runtime_hash}
+        )
+        product_properties.append(
+            {'name': 'creatoros:runtime-file-count', 'value': str(runtime_files)}
+        )
     product_component['properties'] = _sorted_properties(product_properties)
     document: dict[str, Any] = {
         '$schema': SCHEMA_URL,
         'bomFormat': BOM_FORMAT,
         'specVersion': SPEC_VERSION,
-        'serialNumber': normalise_serial(serial, ordered),
+        'serialNumber': normalise_serial(
+            serial, ordered, {'source_commit': source_commit} if source_commit else None
+        ),
         'version': 1,
         'metadata': {
             'timestamp': normalise_timestamp(timestamp),
@@ -1659,6 +1643,23 @@ def _artifact_binding(path: Path) -> tuple[str, str, int]:
     return path.name, digest.hexdigest(), size
 
 
+def _git_source_commit(repo_root: Path) -> str:
+    """Return the exact commit the source inventory describes; never infer it from a branch."""
+    try:
+        result = subprocess.run(
+            ['git', '-C', str(repo_root), 'rev-parse', 'HEAD'],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as error:
+        raise SbomError(f'cannot run git to bind the source commit: {error}') from error
+    commit = result.stdout.strip().lower()
+    if result.returncode != 0 or not SOURCE_COMMIT_RE.fullmatch(commit):
+        raise SbomError('cannot determine the git source commit; pass --source-commit')
+    return commit
+
+
 def generate_sbom(
     repo_root: Path,
     output: Path,
@@ -1670,6 +1671,7 @@ def generate_sbom(
     artifact: Path | None = None,
     payload: Path | None = None,
     profile: str = 'all',
+    source_commit: str | None = None,
 ) -> dict[str, Any]:
     """Collect, build and write the SBOM; returns the document that was written."""
     repo_root = repo_root.resolve()
@@ -1685,6 +1687,21 @@ def generate_sbom(
     )
     binding = _artifact_binding(artifact) if artifact is not None else None
     payload_summary = _payload_tree(payload) if payload is not None else None
+    runtime_summary: tuple[str, str, int] | None = None
+    runtime_manifest = repo_root / 'app/backend/runtime-manifest.json'
+    if profile in {'artifact', 'all'} and runtime_manifest.is_file():
+        runtime_data = _read_json(runtime_manifest, 'runtime manifest')
+        runtime_files = runtime_data.get('files')
+        if not isinstance(runtime_files, list) or not runtime_files:
+            raise SbomError(f'runtime manifest {runtime_manifest} has no files list')
+        runtime_summary = (
+            _display_path(runtime_manifest, repo_root),
+            _sha256_file(runtime_manifest),
+            len(runtime_files),
+        )
+    commit = (source_commit or _git_source_commit(repo_root)).strip().lower()
+    if not SOURCE_COMMIT_RE.fullmatch(commit):
+        raise SbomError(f'--source-commit is not a full 40-character git SHA: {source_commit!r}')
     document = build_document(
         components,
         product_version,
@@ -1695,6 +1712,8 @@ def generate_sbom(
         serial=serial,
         artifact=binding,
         payload=payload_summary,
+        runtime=runtime_summary,
+        source_commit=commit,
     )
     write_document(document, output)
     return document
@@ -1747,6 +1766,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=None,
         help='packaged backend directory (required for profile artifact; sourced from the installed payload)',
     )
+    parser.add_argument(
+        '--source-commit',
+        default=None,
+        help='full git commit SHA the document describes (default: git rev-parse HEAD)',
+    )
     parser.add_argument('--timestamp', default=None, help='ISO 8601 timestamp instead of now')
     parser.add_argument('--serial', default=None, help='UUID to use as the bom serial number')
     args = parser.parse_args(argv)
@@ -1761,6 +1785,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             artifact=args.artifact,
             payload=args.payload,
             profile=args.profile,
+            source_commit=args.source_commit,
         )
     except SbomError as exc:
         print(f'error: {exc}', file=sys.stderr)

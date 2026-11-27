@@ -294,17 +294,26 @@ if ($Stage -ne 'Source') {
     $gatePython = Get-SbomPython
     if (-not $gatePython) {
         Add-Gate 'artifact.payload-inventory' $false 'no Python interpreter: create app\backend\.venv or put python on PATH'
+        Add-Gate 'artifact.payload-sbom' $false 'no Python interpreter for the payload inventory'
+        Add-Gate 'artifact.interpreter' $false 'no Python interpreter for the payload inventory'
     } elseif (-not (Test-Path -LiteralPath $payloadDir)) {
         Add-Gate 'artifact.payload-inventory' $false "packaged payload not found: $payloadDir; run scripts\build-release.ps1"
+        Add-Gate 'artifact.payload-sbom' $false "packaged payload not found: $payloadDir"
+        Add-Gate 'artifact.interpreter' $false "packaged payload not found: $payloadDir"
     } elseif (-not $sbomPath) {
         Add-Gate 'artifact.payload-inventory' $false "no artifact SBOM to compare against $payloadDir"
+        Add-Gate 'artifact.payload-sbom' $false 'no artifact SBOM'
+        Add-Gate 'artifact.interpreter' $false 'no artifact SBOM'
     } else {
         $inventoryJson = Join-Path $releaseDir 'runtime-inventory.gate.json'
         $inventoryText = @(& $gatePython (Join-Path $repo 'scripts\runtime-inventory.py') --payload $payloadDir --repo-root $repo --pyproject (Join-Path $repo 'app\backend\pyproject.toml') --sbom $sbomPath --json-out $inventoryJson 2>&1)
         $inventoryCode = $LASTEXITCODE
         $inventoryTail = ($inventoryText | Select-Object -Last 1) -join ' '
         Add-Gate 'artifact.payload-inventory' ($inventoryCode -eq 0) $(if ($inventoryCode -eq 0) { 'packaged payload matches its SBOM and declared dependencies' } else { "runtime inventory failed: $inventoryTail" })
-        if ($inventoryCode -eq 0 -and (Test-Path -LiteralPath $inventoryJson)) {
+        if ($inventoryCode -ne 0) {
+            Add-Gate 'artifact.payload-sbom' $false "runtime inventory failed, so the payload/SBOM binding is not proven: $inventoryTail"
+            Add-Gate 'artifact.interpreter' $false "runtime inventory failed, so the interpreter manifest is not proven: $inventoryTail"
+        } elseif (Test-Path -LiteralPath $inventoryJson) {
             try {
                 $inventory = Get-Content -LiteralPath $inventoryJson -Raw | ConvertFrom-Json
                 $sbomDocument = Get-Content -LiteralPath $sbomPath -Raw | ConvertFrom-Json
@@ -313,8 +322,12 @@ if ($Stage -ne 'Source') {
                 $treeOk = $treeProperty -and ([string]$treeProperty.value -eq [string]$inventory.payload.tree_sha256)
                 $filesOk = $fileProperty -and ([int]$fileProperty.value -eq [int]$inventory.payload.file_count)
                 Add-Gate 'artifact.payload-sbom' ($treeOk -and $filesOk) "payload tree $($inventory.payload.tree_sha256), $($inventory.payload.file_count) files; SBOM tree $($treeProperty.value), $($fileProperty.value) files"
+                $runtimeOk = [bool]$inventory.runtime_manifest.ok
+                $runtimeDetail = if ($runtimeOk) { "interpreter manifest verified: $($inventory.runtime_manifest.files) files, digest $($inventory.runtime_manifest.sha256)" } else { "interpreter/runtime mismatch: $($inventory.runtime_manifest.findings -join '; ')" }
+                Add-Gate 'artifact.interpreter' $runtimeOk $runtimeDetail
             } catch {
                 Add-Gate 'artifact.payload-sbom' $false "cannot compare payload inventory with the artifact SBOM: $($_.Exception.Message)"
+                Add-Gate 'artifact.interpreter' $false "cannot read the payload inventory: $($_.Exception.Message)"
             }
         }
     }
@@ -463,6 +476,44 @@ if ($Stage -ne 'Source') {
             }
         }
         Add-Gate 'artifact.sbom' $sbomBindOk $sbomBindDetail
+
+        # A stamp written only by build-release.ps1 proves which command produced these bytes and
+        # binds the installer, payload, runtime manifest and all three SBOMs to one source commit.
+        $provenancePath = Join-Path $releaseDir 'release-provenance.json'
+        $provenanceOk = $false
+        $provenanceDetail = "missing build provenance: $provenancePath"
+        if (Test-Path -LiteralPath $provenancePath) {
+            $provenanceProblems = @()
+            try {
+                $provenance = Get-Content -LiteralPath $provenancePath -Raw | ConvertFrom-Json
+                if ([string]$provenance.schema -ne 'creatoros.release-provenance.v1') { $provenanceProblems += "schema is '$($provenance.schema)'" }
+                if ([string]$provenance.release -ne $ReleaseVersion) { $provenanceProblems += "release is '$($provenance.release)'" }
+                if ([string]$provenance.builder -ne 'scripts/build-release.ps1') { $provenanceProblems += "builder is '$($provenance.builder)'" }
+                if ([string]$provenance.source_commit -notmatch '^[0-9a-f]{40}$') { $provenanceProblems += 'source_commit is not a full commit id' }
+                if ([string]$provenance.artifact_sha256 -ne $hash) { $provenanceProblems += "artifact_sha256 does not match $hash" }
+                if ([string]$provenance.artifact_name -ne $name) { $provenanceProblems += "artifact_name does not match $name" }
+                $provenanceRuntime = Join-Path $repo 'app\backend\runtime-manifest.json'
+                if (Test-Path -LiteralPath $provenanceRuntime) {
+                    $actualRuntime = (Get-FileHash -LiteralPath $provenanceRuntime -Algorithm SHA256).Hash.ToLowerInvariant()
+                    if ([string]$provenance.runtime_manifest_sha256 -ne $actualRuntime) { $provenanceProblems += 'runtime_manifest_sha256 does not match the committed manifest' }
+                } else { $provenanceProblems += 'committed runtime manifest is missing' }
+
+                if ($sbomPath -and (Test-Path -LiteralPath $sbomPath)) {
+                    $boundSbom = Get-Content -LiteralPath $sbomPath -Raw | ConvertFrom-Json
+                    $propertyMap = @{}
+                    foreach ($property in @($boundSbom.metadata.component.properties)) { if ($property) { $propertyMap[[string]$property.name] = [string]$property.value } }
+                    if ($propertyMap['creatoros:payload-tree-sha256'] -ne [string]$provenance.payload_tree_sha256) { $provenanceProblems += 'payload_tree_sha256 does not match the artifact SBOM' }
+                    if ($propertyMap['creatoros:runtime-manifest-sha256'] -ne [string]$provenance.runtime_manifest_sha256) { $provenanceProblems += 'runtime_manifest_sha256 does not match the artifact SBOM' }
+                    if ($propertyMap['creatoros:source-commit'] -ne [string]$provenance.source_commit) { $provenanceProblems += 'source_commit does not match the artifact SBOM' }
+                    if ([int]$propertyMap['creatoros:payload-files'] -ne [int]$provenance.payload_file_count) { $provenanceProblems += 'payload_file_count does not match the artifact SBOM' }
+                } else { $provenanceProblems += 'artifact SBOM is missing' }
+                $provenanceOk = $provenanceProblems.Count -eq 0
+                $provenanceDetail = if ($provenanceOk) { "stamp binds $name, commit $($provenance.source_commit), payload $($provenance.payload_tree_sha256)" } else { $provenanceProblems -join '; ' }
+            } catch {
+                $provenanceDetail = "build provenance cannot be read: $($_.Exception.Message)"
+            }
+        }
+        Add-Gate 'artifact.build-provenance' $provenanceOk $provenanceDetail
 
         $sig = Get-AuthenticodeSignature -LiteralPath $artifactPath
         Add-Gate 'artifact.signature' ($sig.Status -eq 'Valid') "Authenticode status: $($sig.Status)"

@@ -4,10 +4,10 @@ The execution harnesses verify the release artifact immediately before they star
 documents what is checked, when, the exact commands, the difference between an unsigned development
 build and a signed release, and the gap the guard does not close.
 
-**Current state on this machine (2026-11-25): no code-signing certificate is available.** No
+**Current state on this machine (2026-11-26): no code-signing certificate is available.** No
 Authenticode signature or RFC 3161 timestamp is claimed here for any CreatorOS artifact. The
-`0.8.0` installer is `NotSigned` and its `SHA256SUMS.txt` is stale, so the guard refuses it (see
-section 6).
+`0.8.0` installer is `NotSigned`; its `SHA256SUMS.txt` matches the current bytes, so the guard
+accepts it only with the explicit development-only `-AllowUnsigned` flag (see section 6).
 
 ---
 
@@ -169,17 +169,17 @@ Authenticode genuinely returns `NotSigned` for it. It is never executed.
 
 ```
 releases\0.8.0\CreatorOS-Setup-0.8.0.exe
-  sha256   ad8b7772b6f72ad5d1fc51c196b46308cb20acd2001f3a0ac420875d073a7a4b
+  bytes    139,888,520
+  sha256   d3a73f608d903e72de35a5f2def18d31ed367dccbc4fe922ac7f739580e9cc07
   Authenticode Status  NotSigned
 
-releases\0.8.0\SHA256SUMS.txt records
-  b9686c6e0eeab95c9d5cff0117f469b4242000baa27c56a9837e5ff1f896c4e0
+releases\0.8.0\SHA256SUMS.txt records the same d3a73f60...e9cc07 digest
 ```
 
-The manifest is stale (it describes bytes that no longer exist), so the guard refuses the 0.8.0
-installer even though it is present. This is the intended behaviour: a stale manifest is exactly
-the failure mode the guard exists to stop. The local 0.8.0 leftover must not be reused; see
-`docs/release/V1_RELEASE_BLOCKERS.md` section 2.4.
+The 0.8.0 manifest and installer now agree, and the Wave 5 artifact stamp binds the installer,
+payload, runtime manifest and all three SBOMs to the source commit. The installer is still
+unsigned and must not be published as a release; the guard refuses it without `-AllowUnsigned`.
+See `docs/release/WAVE5_RELEASE_REPORT.md`.
 
 No CreatorOS Authenticode or RFC 3161 evidence is claimed. The self-test's signed case copies
 Microsoft's signed `powershell.exe` only to exercise the guard's signed branch; it is not evidence

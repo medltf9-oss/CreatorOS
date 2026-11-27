@@ -359,16 +359,17 @@ def test_prerequisites_profile_uses_declared_hashes_without_reading_binaries(sbo
     )
     components = {component['name']: component for component in document['components']}
     assert set(components) == {'ffmpeg', 'ffprobe', 'ollama'}
-    sections = sbom._manifest_sections(REPO_ROOT) or {}
-    declared = sections['ffmpeg and ffprobe']
+    declared = json.loads(manifest.read_text(encoding='utf-8'))
+    by_id = {entry['id']: entry for entry in declared['components']}
     for binary in ('ffmpeg', 'ffprobe'):
         component = components[binary]
-        expected = sbom._plain_markdown(declared[f'{binary}.exe sha-256']).lower()
+        expected = by_id[binary]['acquisition']['sha256'].lower()
         assert component['hashes'] == [{'alg': 'SHA-256', 'content': expected}]
         assert component['licenses']
         properties = _properties(component)
+        assert properties['creatoros:source'].endswith('prerequisites.v1.json')
         assert 'creatoros:redistribution-status' in properties
-        assert 'creatoros:license-declaration' in properties
+        assert 'creatoros:license-source' in properties
     assert not [
         item for item in document.get('properties', [])
         if item.get('name') == 'creatoros:collection-error'
@@ -524,4 +525,12 @@ def test_artifact_profile_requires_payload(sbom, tmp_path):
 def test_an_unknown_profile_is_rejected(sbom, tmp_path):
     with pytest.raises(sbom.SbomError, match='unknown SBOM profile'):
         sbom.generate_sbom(REPO_ROOT, tmp_path / 'bad.cdx.json', profile='everything')
+
+
+def test_generator_never_executes_the_ffmpeg_binaries():
+    """D-7: presence hashing must not become code execution for a replaced binary."""
+    text = SCRIPT.read_text(encoding="utf-8")
+    assert "_binary_version" not in text
+    probe = text.split("subprocess.run(", 1)
+    assert len(probe) == 1 or "ffmpeg" not in probe[1][:400]
 

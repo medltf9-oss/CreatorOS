@@ -56,7 +56,7 @@ def test_status_describes_an_empty_machine_without_inventing_ai(no_runtime, clie
 def test_status_lists_pinned_prerequisites_without_claiming_they_are_verified(no_runtime, client):
     body = client.get("/setup/status").json()
     by_id = {item["id"]: item for item in body["prerequisites"]}
-    assert set(by_id) == {"ollama", "ffmpeg"}
+    assert set(by_id) == {"ollama", "ffmpeg", "ffprobe"}
     assert by_id["ollama"]["state"] == "missing"
     assert by_id["ollama"]["verified"] is False
     assert by_id["ollama"]["download_url"].startswith("https://github.com/ollama/ollama/releases/")
@@ -70,7 +70,7 @@ def test_prerequisite_catalog_reports_the_manifest_it_used(no_runtime, client):
     body = response.json()
     assert body["manifest_schema"] == "creatoros.prerequisites.v1"
     assert body["updated"] == "2026-11-25"
-    assert len(body["components"]) == 2
+    assert len(body["components"]) == 3
 
 
 def test_completion_is_recorded_once_and_reported_on_the_next_status(client):
@@ -172,3 +172,34 @@ def test_a_broken_manifest_degrades_the_status_instead_of_breaking_the_wizard(cl
     catalog_body = catalog.json()
     assert catalog_body["code"] == "MANIFEST_INVALID"
     assert "sha256" in catalog_body["message"]
+
+
+def test_consent_is_explicit_recorded_and_never_required_for_local_tools(no_runtime, client):
+    status = client.get("/setup/status").json()
+    ollama = next(item for item in status["prerequisites"] if item["id"] == "ollama")
+    assert ollama["consent_required"] is True
+    assert ollama["consent_accepted"] is False
+    assert ollama["consent_summary"]
+    assert ollama["consent_recorded_at"] is None
+
+    recorded = client.post("/setup/prerequisites/ollama/consent", json={"accepted": True})
+    assert recorded.status_code == 200, recorded.text
+    assert recorded.json()["accepted"] is True
+
+    refreshed = client.get("/setup/status").json()
+    ollama = next(item for item in refreshed["prerequisites"] if item["id"] == "ollama")
+    assert ollama["consent_accepted"] is True
+    assert ollama["consent_recorded_at"]
+
+    # A local tool has no network step, so consent is not a meaningful record for it.
+    refused = client.post("/setup/prerequisites/ffmpeg/consent", json={"accepted": True})
+    assert refused.status_code == 409
+
+
+def test_ffprobe_is_pinned_and_verified_separately_from_ffmpeg(no_runtime, client):
+    body = client.get("/setup/prerequisites").json()
+    by_id = {item["id"]: item for item in body["components"]}
+    assert by_id["ffprobe"]["required"] is True
+    assert by_id["ffprobe"]["state"] in {"missing", "ok"}
+    assert by_id["ffprobe"]["verified"] is False
+    assert by_id["ffprobe"]["source_url"].startswith("https://www.gyan.dev/ffmpeg/")

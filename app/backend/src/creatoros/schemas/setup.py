@@ -95,7 +95,11 @@ class PrerequisiteState(BaseModel):
     redistribution_detail: str
     download_url: str | None = None
     release_page: str | None = None
+    source_url: str | None = None
     consent_required: bool = False
+    consent_summary: str = ""
+    consent_accepted: bool = False
+    consent_recorded_at: str | None = None
 
 
 class SetupStatus(BaseModel):
@@ -123,6 +127,16 @@ class PrerequisiteCatalog(BaseModel):
 
 class VerifyRequest(BaseModel):
     path: str | None = Field(default=None, description="Absolute path to the downloaded file.")
+
+
+class ConsentRequest(BaseModel):
+    accepted: bool = Field(description="The user's explicit decision for this component.")
+
+
+class ConsentResponse(BaseModel):
+    component_id: str
+    accepted: bool
+    recorded_at: str
 
 
 class VerifyCheck(BaseModel):

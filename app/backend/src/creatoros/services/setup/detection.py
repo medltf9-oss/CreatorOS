@@ -1,6 +1,6 @@
 """Read-only detection for the first-run wizard.
 
-Every probe is bounded (a short HTTP timeout, a short FFmpeg subprocess) because the wizard has to
+Every probe is bounded (a short HTTP timeout); FFmpeg is not executed by a presence check because
 open quickly on the worst machine: no Ollama, no GPU, no network. Nothing here installs, downloads or
 mutates state; a probe that cannot answer returns `None` plus the reason instead of a guess.
 """
@@ -9,7 +9,6 @@ from __future__ import annotations
 import os
 import platform
 import shutil
-import subprocess
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -23,7 +22,6 @@ from ...core.settings import Settings
 
 DEFAULT_ENDPOINT = "http://127.0.0.1:11434"
 PROBE_TIMEOUT_S = 1.5
-FFMPEG_TIMEOUT_S = 15
 
 
 @dataclass(frozen=True)
@@ -148,26 +146,18 @@ def detect_ollama(
 
 
 def detect_ffmpeg(settings: Settings) -> FfmpegFacts:
-    """Report the bundled tool path the backend will really spawn, and what it says about itself."""
+    """Report whether the pinned tool path exists, without executing a possibly replaced binary.
+
+    A presence check must never spawn the executable: at this point the bytes have not been hashed or
+    signature-checked, so running `ffmpeg -version` would give an attacker code execution just by
+    dropping a file at the expected path. The version is read only by the explicit `/verify` action.
+    """
     bin_dir = settings.ffmpeg_bin
     ffmpeg = bin_dir / "ffmpeg.exe"
     ffprobe = bin_dir / "ffprobe.exe"
     if not ffmpeg.is_file():
         return FfmpegFacts(False, ffprobe.is_file(), None, None, f"no ffmpeg.exe under {bin_dir}")
-    try:
-        completed = subprocess.run(
-            [str(ffmpeg), "-hide_banner", "-version"],
-            capture_output=True,
-            text=True,
-            timeout=FFMPEG_TIMEOUT_S,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        return FfmpegFacts(True, ffprobe.is_file(), str(ffmpeg), None, f"{type(exc).__name__}: {exc}")
-    output = (completed.stdout or completed.stderr or "").strip().splitlines()
-    version = output[0].strip() if output else None
-    error = None if completed.returncode == 0 else f"ffmpeg -version exited {completed.returncode}"
-    return FfmpegFacts(True, ffprobe.is_file(), str(ffmpeg), version, error)
+    return FfmpegFacts(True, ffprobe.is_file(), str(ffmpeg), None, None)
 
 
 def disk_facts(root: Path) -> DiskFacts:

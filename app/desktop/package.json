@@ -42,8 +42,6 @@
     "charts:preview": "vite build --config vite.charts.config.ts",
     "charts:shots": "vite build --config vite.charts.config.ts && node scripts/capture-charts.cjs",
     "start": "node scripts/launch-electron.cjs",
-    "icons": "node scripts/electron-run.cjs scripts/make-icons.cjs",
-    "package": "vite build && electron-builder --config electron-builder.yml --win --x64",
-    "package:dir": "vite build && electron-builder --config electron-builder.yml --win --x64 --dir"
+    "icons": "node scripts/electron-run.cjs scripts/make-icons.cjs"
   }
 }
