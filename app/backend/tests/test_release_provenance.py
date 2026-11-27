@@ -42,5 +42,6 @@ def test_readme_does_not_advertise_a_bypass_path():
 
 def test_bundle_verifier_waits_for_the_exit_code():
     build = (REPO / "scripts" / "build-backend.ps1").read_text(encoding="utf-8")
+    assert "ProcessStartInfo" in build
     assert "$proc.WaitForExit()" in build
-    assert "$exitCode = $proc.ExitCode" in build
+    assert "$proc.ExitCode" in build

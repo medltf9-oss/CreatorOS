@@ -238,27 +238,33 @@ Write-Host "    bundle: $OutputRoot ($size MB)"
 
 function Invoke-BundlePython {
     param([string[]]$Arguments, [int]$TimeoutSeconds = 120)
-    $stamp = [guid]::NewGuid().ToString('N')
-    $stdoutPath = Join-Path $sandbox "$stamp.out"
-    $stderrPath = Join-Path $sandbox "$stamp.err"
-    $proc = Start-Process -FilePath $bundleExe -ArgumentList $Arguments `
-        -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath `
-        -PassThru -WindowStyle Hidden
+    # Start-Process can expose an empty ExitCode for a process whose redirected streams have already
+    # closed. A ProcessStartInfo object gives us the exit code and both streams deterministically.
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $bundleExe
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.CreateNoWindow = $true
+    $psi.Arguments = (($Arguments | ForEach-Object {
+        if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ }
+    }) -join ' ')
+    $proc = [System.Diagnostics.Process]::Start($psi)
     try {
+        $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+        $stderrTask = $proc.StandardError.ReadToEndAsync()
         if (-not $proc.WaitForExit($TimeoutSeconds * 1000)) {
-            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            $proc.Kill()
             throw "bundled interpreter timed out after $TimeoutSeconds s: $($Arguments -join ' ')"
         }
-        # WaitForExit(int) can return before the exit code and redirected streams are observable.
-        # The no-argument overload closes that race; reading ExitCode immediately can otherwise
-        # report a spurious failure for a process that actually exited 0.
         $proc.WaitForExit()
-        $exitCode = $proc.ExitCode
-        $stdout = if (Test-Path $stdoutPath) { Get-Content $stdoutPath -Raw } else { '' }
-        $stderr = if (Test-Path $stderrPath) { Get-Content $stderrPath -Raw } else { '' }
-        return [pscustomobject]@{ ExitCode = $exitCode; StdOut = $stdout; StdErr = $stderr }
+        return [pscustomobject]@{
+            ExitCode = $proc.ExitCode
+            StdOut = $stdoutTask.GetAwaiter().GetResult()
+            StdErr = $stderrTask.GetAwaiter().GetResult()
+        }
     } finally {
-        Remove-Item $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+        $proc.Dispose()
     }
 }
 
