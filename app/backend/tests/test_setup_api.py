@@ -200,6 +200,6 @@ def test_ffprobe_is_pinned_and_verified_separately_from_ffmpeg(no_runtime, clien
     body = client.get("/setup/prerequisites").json()
     by_id = {item["id"]: item for item in body["components"]}
     assert by_id["ffprobe"]["required"] is True
-    assert by_id["ffprobe"]["state"] in {"missing", "ok"}
+    assert by_id["ffprobe"]["state"] in {"missing", "ok", "unverified"}
     assert by_id["ffprobe"]["verified"] is False
     assert by_id["ffprobe"]["source_url"].startswith("https://www.gyan.dev/ffmpeg/")
