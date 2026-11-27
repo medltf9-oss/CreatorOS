@@ -3,7 +3,7 @@
 **Status: NOT READY.** No v1.0.0 tag, installer or GitHub release has been published.  
 **Audit date:** 2026-11-27
 
-**Baseline:** `0.8.0`; Wave 5 candidate at `35924e5` on `release/v1.0.0-readiness` (PR #7).
+**Baseline:** `0.8.0`; Wave 5 candidate at final HEAD `386d322` (installer built at `35924e5`) on `release/v1.0.0-readiness` (PR #7).
 `main` is at `0683773` (`0.8.0`), the squash merge of PR #6.
 
 This file records what prevents a truthful v1.0.0 release. A blocker is not closed by changing a
@@ -23,7 +23,7 @@ The authoritative pass/blocked/not-run matrix is `V1_RELEASE_GATE_MATRIX.md`; th
 | Signed installer attached to the GitHub release | **BLOCKED** | No signed v1.0.0 installer exists. | Build, sign, verify, attach the exact signed bytes, and publish `SHA256SUMS.txt`. |
 | SBOM for the released artifact | **PASS for the Wave 5 0.8.0 candidate; NOT RUN for 1.0.0** | `scripts/generate_sbom.py` produces deterministic CycloneDX documents: 48 source components, 3 prerequisites, and 51 artifact components read from `releases\0.8.0\win-unpacked\resources\backend` (33 Python; 0/0 payload-vs-SBOM discrepancies; tree `0475d2b1…`; runtime manifest `e6b25a84…`; installer `a45ffb1e…`). No v1.0.0 artifact exists. Two unbound source/prerequisites SBOMs left from 2026-11-26 were quarantined under `D:\P\wave5\quarantine\releases-1.0.0`; they are not evidence of a v1.0.0 build. | On the release commit and signed payload run the artifact profile with `--artifact` and `--payload releases\1.0.0\win-unpacked\resources\backend`, review it, and attach it. |
 | Secret scan | **PASS (tracked text)** | `scripts\release-gate.ps1 -Stage Source` finds no private keys, GitHub tokens, AWS keys or literal signing passwords in tracked non-test text files. | Re-run on the release commit; also scan the built artifact and logs. |
-| CI green on the release commit | **PASS at `35924e5` (unsigned candidate)** | GitHub Actions run `45992648710` at `35924e5`: SUCCESS, both backend and desktop jobs. Local full regression is 1,672 passed / 30 skipped / 0 failed. | Re-run the full workflow on the signed final commit and require it before merge. |
+| CI green on the release commit | **PASS at `386d322` (unsigned candidate)** | GitHub Actions run `45995301334` at `386d322`: SUCCESS, both backend and desktop jobs. Local full regression is 1,672 passed / 30 skipped / 0 failed. | Re-run the full workflow on the signed final commit and require it before merge. |
 | Branch protection / required checks | **PASS (last verified 2026-11-25; not rechecked at `35924e5`)** | `gh api` showed `strict: true`, no force pushes, and required contexts `Backend tests (Windows)` and `Desktop checks (Windows)`. | Recheck immediately before merge; keep the checks required and do not bypass them. |
 
 ## 2. Product-completeness blockers

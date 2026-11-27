@@ -1,20 +1,21 @@
 # v1.0.0 release gate matrix
 
 **Status date:** 2026-11-27
-**Release candidate:** unsigned 0.8.0 build at `35924e5`; not publishable. Public release remains
+**Release candidate:** unsigned 0.8.0 build at `35924e5`; final code HEAD `386d322`; not publishable. Public release remains
 **v0.8.0** (source only).
-**Wave 5 code commit:** `35924e5` on `release/v1.0.0-readiness` (PR #7, draft). Documentation
-evidence commits after it are evidence-only; the installer came from this exact commit.
+**Wave 5 code commit:** `386d322` on `release/v1.0.0-readiness` (PR #7, draft). The installer was
+built at `35924e5`; `386d322` adds the independent-QA test/comment/doc fixes and does not change
+product code.
 **Rule:** a mandatory gate passes only with evidence for the exact release commit and artifact.
 `FAIL`, `BLOCKED`, `NOT RUN` and `UNKNOWN` all block the release. This matrix is the authoritative
 summary; details live in the linked documents.
 
 | # | Gate | Status | Evidence | What closes it |
 | ---: | --- | --- | --- | --- |
-| 1 | Source integrity | **PASS at `35924e5`** | Source gate **13/13 PASSED** in the Artifact run on 2026-11-27; clean tracked tree; source SBOM 48 components, serial `b9d20cd7…`, SHA-256 `8722fbd7…`. A fresh-clone rerun was not repeated for this commit; the Wave 4 clean-clone evidence is `b10fe00` | Re-run in a fresh clone for the signed final commit |
-| 2 | CI on the exact commit | **PASS at `35924e5`** | GitHub Actions run `45992648710` at `35924e5`: **SUCCESS**. `Backend tests (Windows)` and `Desktop checks (Windows)` both passed; the previous run at `aee8e4c` failed one environment-dependent setup assertion, fixed in `35924e5` | Re-run on the signed final commit |
-| 3 | Backend/frontend tests | **PASS at `35924e5`** | Local backend **1,672 passed, 30 skipped, 0 failed** in 273.86s on the final test tree, including the runtime-manifest, provenance, inventory-error and setup tests. Desktop **227 passed, 0 failed**; setup E2E passed | Re-run on the signed final commit |
-| 4 | Typecheck, build, lint | **PASS at `35924e5`** | `ruff check src tests` and all changed release scripts pass; `pnpm typecheck` passes; desktop tests **227 passed**; `pnpm build` ran in the release build. `scripts\e2e_setup.py`/`scripts\normalize_eol.py` retain pre-existing findings outside the product lint scope | Re-run on the signed final commit |
+| 1 | Source integrity | **PASS at `386d322`** | Source gate **13/13 PASSED** in the Artifact run on 2026-11-27; clean tracked tree; source SBOM 48 components, serial `b9d20cd7…`, SHA-256 `8722fbd7…`. A fresh-clone rerun was not repeated for this commit; the Wave 4 clean-clone evidence is `b10fe00` | Re-run in a fresh clone for the signed final commit |
+| 2 | CI on the exact commit | **PASS at `386d322`** | GitHub Actions run `45995301334` at the final code-bearing commit `386d322`: **SUCCESS**, backend and desktop jobs. Run `45992648710` at `35924e5` was also green; the run at `aee8e4c` failed one environment-dependent setup assertion, fixed in `35924e5` | Re-run on the signed final commit |
+| 3 | Backend/frontend tests | **PASS at `386d322`** | Local backend **1,672 passed, 30 skipped, 0 failed** in 273.86s on the final test tree, including the runtime-manifest, provenance, inventory-error and setup tests. Desktop **227 passed, 0 failed**; setup E2E passed | Re-run on the signed final commit |
+| 4 | Typecheck, build, lint | **PASS at `386d322`** | `ruff check src tests` and all changed release scripts pass; `pnpm typecheck` passes; desktop tests **227 passed**; `pnpm build` ran in the release build. `scripts\e2e_setup.py`/`scripts\normalize_eol.py` retain pre-existing findings outside the product lint scope | Re-run on the signed final commit |
 | 5 | CA-issued certificate | **BLOCKED** | No CA-issued certificate with a private key in either Windows store; `sign-release.ps1 -Check` reports `CSC_LINK : none` | Owner orders a certificate (`OWNER_CERTIFICATE_ACTION.md`) |
 | 6 | Private-key protection | **BLOCKED** | No token, HSM or signing service exists | Certificate issued to hardware or a CA signing service |
 | 7 | Signature inventory | **PASS (baseline); NOT RUN on a signed candidate** | `docs/release/SIGNATURE_INVENTORY.md`: 64 PE files in the 0.8.0 unpacked tree (Electron plus backend), 44 vendor-signed, 20 unsigned. The minimized backend accounts for 51 PE files (1 `python.exe`, 39 `.pyd`, 11 DLLs) and has no PyInstaller bootloader; the installer adds Electron's own PE set | Regenerate on the packaged release candidate |
@@ -40,7 +41,7 @@ summary; details live in the linked documents.
 
 ## Summary
 
-- **Passing now:** source integrity and the local full regression at `35924e5`; D-5..D-13 tooling
+- **Passing now:** source integrity and the local full regression at `386d322`; D-5..D-13 tooling
   and tests; runtime manifest; source/prerequisites/artifact SBOMs and their bindings; payload
   inventory; artifact manifest; build provenance; signature inventory baseline.
 - **Artifact gate:** **25 passed, 6 failed**. All six failures are signing-related: no certificate,
@@ -48,8 +49,8 @@ summary; details live in the linked documents.
 - **Blocked by the owner:** certificate and publisher identity, clean SAC-on machine, FFmpeg
   redistribution, Ollama redistribution and the payload design.
 - **Not started because no signed artifact exists:** Authenticode, timestamp, clean install,
-  Defender/SmartScreen evidence, published-asset verification and the tag. CI at `35924e5` is
-  green (run `45992648710`), but that is not a signed-release pass.
+  Defender/SmartScreen evidence, published-asset verification and the tag. CI at `386d322` is
+  green (run `45995301334`), but that is not a signed-release pass.
 
 The release stays at **v0.8.0** until the blocked and not-run gates pass. The Wave 5 candidate is
 a real unsigned build, not a releasable artifact.

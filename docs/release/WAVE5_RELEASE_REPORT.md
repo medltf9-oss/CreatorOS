@@ -1,9 +1,11 @@
 # Wave 5 - final engineering defect closure and release-candidate readiness
 
 **Date:** 2026-11-27. **Branch:** `release/v1.0.0-readiness` (PR #7, draft). **Product
-version:** 0.8.0, unchanged. **Code/build commit:**
-`35924e536590c1aa61cab6f0bf2d418363f7f3c1` (2026-11-27T12:42:08+01:00). The installer was
-built from this clean commit; later commits on the branch are test/comment/documentation evidence only and do not change product code.
+version:** 0.8.0, unchanged. **Final code HEAD:**
+`386d3220e28fdd56502f079e0e80d9a91657ac67`. **Installer build commit:**
+`35924e536590c1aa61cab6f0bf2d418363f7f3c1` (2026-11-27T12:42:08+01:00). The installer was built
+from that clean commit; `386d322` adds test/comment/documentation evidence only and does not change
+product code.
 
 ## Verdict
 
@@ -59,12 +61,15 @@ dependencies missing**, and the interpreter manifest verified.
 * Desktop: `pnpm typecheck` passed; `pnpm test` **227 passed, 0 failed**.
 * Release build: `scripts\build-release.ps1 -SkipIcons` succeeded from the clean commit and wrote
   the installer, all three SBOMs, inventory and provenance stamp.
-* GitHub Actions: run **`45992648710`** at `35924e5`, **SUCCESS**; both `Backend tests (Windows)`
-  and `Desktop checks (Windows)` passed. Documentation commits after it do not change product code.
+* GitHub Actions: run **`45995301334`** at the final code-bearing commit `386d322`, **SUCCESS**; both
+  `Backend tests (Windows)` and `Desktop checks (Windows)` passed. The prior run `45992648710` at
+  `35924e5` was also green.
 
 ## 4. Gate result
 
-`release-gate.ps1 -ReleaseVersion 0.8.0 -Stage Artifact` ran at `35924e5`:
+`release-gate.ps1 -ReleaseVersion 0.8.0 -Stage Artifact` ran at the final clean HEAD
+`386d3220e28fdd56502f079e0e80d9a91657ac67`; the stamp binds the installer to build commit
+`35924e5`. Full log: `D:\P\wave5\gate-artifact-wave5-final.log`.
 
 **25 passed, 6 failed. RELEASE GATE: NOT READY.** All non-signing checks passed, including
 `git.clean`, source/prerequisites/artifact SBOMs, SBOM consistency, payload inventory, payload/SBOM
@@ -135,6 +140,7 @@ Residual evidence caveats, independently confirmed by A09:
 | `affa8cb` | First process-wait fix (superseded by `aee8e4c`) |
 | `aee8e4c` | Deterministic `ProcessStartInfo` exit-code handling; first complete candidate build |
 | `35924e5` | Test-only CI portability fix for an unverified local ffprobe; final candidate rebuilt from this commit |
+| `386d322` | Independent-QA fixes: D-11 mid-walk `OSError` test, SAC build comment, Wave 5 evidence and corrections; CI green |
 
 The Wave 4 report now carries a correction banner; its artifact SBOM count and artifact claims
 must not be used for this candidate.
