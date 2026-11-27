@@ -1,0 +1,62 @@
+{
+  "packages": {
+    "@tailwindcss/vite": {
+      "license": "MIT",
+      "version": "4.3.5"
+    },
+    "@types/react": {
+      "license": "MIT",
+      "version": "19.3.0"
+    },
+    "@types/react-dom": {
+      "license": "MIT",
+      "version": "19.3.0"
+    },
+    "@vitejs/plugin-react": {
+      "license": "MIT",
+      "version": "6.3.0"
+    },
+    "concurrently": {
+      "license": "MIT",
+      "version": "10.0.7"
+    },
+    "electron": {
+      "license": "MIT",
+      "version": "45.4.1"
+    },
+    "electron-builder": {
+      "license": "MIT",
+      "version": "26.18.0"
+    },
+    "lucide-react": {
+      "license": "ISC",
+      "version": "1.78.0"
+    },
+    "react": {
+      "license": "MIT",
+      "version": "19.3.1"
+    },
+    "react-dom": {
+      "license": "MIT",
+      "version": "19.3.1"
+    },
+    "tailwindcss": {
+      "license": "MIT",
+      "version": "4.3.5"
+    },
+    "typescript": {
+      "license": "Apache-2.0",
+      "version": "7.0.2"
+    },
+    "vite": {
+      "license": "MIT",
+      "version": "8.3.8"
+    },
+    "wait-on": {
+      "license": "MIT",
+      "version": "9.5.1"
+    }
+  },
+  "schema": 1,
+  "source": "app/desktop/pnpm-lock.yaml + installed package metadata (audited 2026-11-26)"
+}

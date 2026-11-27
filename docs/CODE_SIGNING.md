@@ -56,7 +56,7 @@ installer, not a script, not a troubleshooting step. The build adapts to it inst
 | Phase 9, first two builds | installer ran, 17/17 checks |
 | Phase 9, later builds of the same artefact | refused at launch, Device Guard `CodeIntegrity 3077` |
 | Phase 10, `releases/0.8.0/CreatorOS-Setup-0.8.0.exe` (sha256 `0ac5865c…`), re-tested | **installed, 12/12 checks** |
-| 2026-11-25, final build `AD8B7772…`, `VerifiedAndReputablePolicyState = 1` | refused at spawn ("application control policy has blocked this file", CodeIntegrity 3118); `npm run package` also failed because the uninstaller step executes that stub |
+| 2026-11-25, final build `AD8B7772…`, `VerifiedAndReputablePolicyState = 1` | refused at spawn ("application control policy has blocked this file", CodeIntegrity 3118); the direct electron-builder package path also failed because the uninstaller step executes that stub |
 | 2026-11-25, same final build, machine owner turned SAC off (state 0) | packaging finished; `verify-install.ps1 -Uninstall` = **17/17** |
 
 The same bytes were refused on one day and accepted on another. That is the honest description of
@@ -239,10 +239,11 @@ PE checksum field and the appended signature blob, so flipping a byte **near the
 
 A valid signature is necessary, not sufficient. After the first signed build:
 
-1. `powershell -File scripts\verify-install.ps1` - installs, checks both shortcuts, launches the app,
-   confirms the bundled backend and the database revision (12 checks);
-2. `powershell -File scripts\verify-install.ps1 -Uninstall` - adds 5 checks that uninstalling removes
-   the shortcuts and leaves the data root intact;
+1. `powershell -File scripts\verify-install.ps1 -RequireSignature` - verifies the signed bytes against
+   `SHA256SUMS.txt`, then installs, checks both shortcuts, launches the app, confirms the bundled
+   backend and the database revision (12 checks);
+2. `powershell -File scripts\verify-install.ps1 -Uninstall -RequireSignature` - adds 5 checks that
+   uninstalling removes the shortcuts and leaves the data root intact;
 3. install it on a **clean** Windows 11 machine with Smart App Control on and **no** development tools.
    This machine cannot be that machine: it has Python, Node, the Windows SDK and the build tree, all of
    which change what SAC sees. Only a clean machine answers "will a stranger be able to run this?".

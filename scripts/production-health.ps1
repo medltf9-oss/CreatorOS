@@ -32,6 +32,16 @@
 
 .PARAMETER KeepRunning
     Leave the app open at the end instead of closing it.
+
+.PARAMETER AllowUnsigned
+    Accept an unsigned installer because it is a local development build. The build is reported as
+    unsigned and must not be published.
+
+.PARAMETER RequireSignature
+    Release evidence mode: require a valid Authenticode signature with an RFC 3161 timestamp.
+
+.PARAMETER ChecksumFile
+    SHA256SUMS.txt to verify the installer against (default: next to the installer).
 #>
 [CmdletBinding()]
 param(
@@ -40,11 +50,15 @@ param(
     [switch]$SkipSweep,
     [switch]$KeepRunning,
     [int]$Port = 9444,
-    [string]$Version = ''
+    [string]$Version = '',
+    [switch]$AllowUnsigned,
+    [switch]$RequireSignature,
+    [string]$ChecksumFile = ''
 )
 
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+. (Join-Path $repo 'scripts\lib\artifact-guard.ps1')
 if (-not $Version) {
     $package = Get-Content (Join-Path $repo 'app\desktop\package.json') -Raw | ConvertFrom-Json
     $Version = $package.version
@@ -69,6 +83,30 @@ function Check($name, $ok, $detail) {
     $script:results += [pscustomobject]@{ check = $name; ok = [bool]$ok; detail = $detail }
 }
 function Note($text) { Write-Host "        $text" -ForegroundColor DarkGray }
+
+# Every installer execution goes through the same guard: the bytes are re-hashed against the release
+# SHA256SUMS.txt and the Authenticode signature is inspected immediately before Start-Process. The
+# function returns $false instead of throwing, so a refusal becomes one failed check, not a crash.
+function Assert-SetupVerified([string]$InstallerPath, [string]$CheckName) {
+    $guardArguments = @{ Path = $InstallerPath }
+    if ($script:ChecksumFile) { $guardArguments['ChecksumFile'] = $script:ChecksumFile }
+    if ($script:RequireSignature) { $guardArguments['RequireSignature'] = $true }
+    if ($script:AllowUnsigned) { $guardArguments['AllowUnsigned'] = $true }
+    try {
+        $artifact = Assert-ArtifactVerified @guardArguments
+        if ($artifact.Unsigned) {
+            $signatureSummary = 'UNSIGNED dev build, must not be published'
+        } else {
+            $signatureSummary = "signature=$($artifact.SignatureStatus), timestamped=$($artifact.Timestamped)"
+        }
+        Check $CheckName $true ("sha256={0}..., {1}" -f $artifact.Sha256.Substring(0, 16), $signatureSummary)
+        return $true
+    } catch {
+        Check $CheckName $false $_.Exception.Message
+        Write-Host "  refusing to run the installer: $InstallerPath" -ForegroundColor Red
+        return $false
+    }
+}
 
 # The installed backend is used for database reads on purpose: it is the interpreter the product
 # actually ships, so a broken bundle fails here rather than in a user's hands.
@@ -311,7 +349,9 @@ Check 'only append-only tables grew' ($unexpected.Count -eq 0) $(if ($unexpected
 if ($IncludeUpgrade) {
     Write-Host "`n==> installing over the existing install (the upgrade path)" -ForegroundColor Cyan
     if (-not (Test-Path $setup)) { Check 'installer present' $false $setup }
-    else {
+    elseif (-not (Assert-SetupVerified $setup 'installer artifact verified')) {
+        Note 'upgrade not attempted: the installer failed verification'
+    } else {
         $upgradeSnapshot = Get-DataSnapshot
         $proc = Start-Process -FilePath $setup -ArgumentList '/S' -PassThru
         $proc.WaitForExit(420000) | Out-Null
@@ -342,13 +382,15 @@ if ($IncludeUninstall) {
         $afterUninstall = Get-DataSnapshot
         Check 'data root survives uninstall' ($afterUninstall.counts.analytics_metric_definition -eq $uninstallSnapshot.counts.analytics_metric_definition -and $afterUninstall.counts.media_asset -eq $uninstallSnapshot.counts.media_asset) "metrics=$($afterUninstall.counts.analytics_metric_definition), media=$($afterUninstall.counts.media_asset)"
         Check 'database survives uninstall' ($afterUninstall.integrity -eq 'ok') "integrity=$($afterUninstall.integrity)"
-        if (Test-Path $setup) {
+        if (-not (Test-Path $setup)) {
+            Note "no installer at $setup; leaving the app uninstalled (reinstall with scripts\install-unpacked.ps1)"
+        } elseif (-not (Assert-SetupVerified $setup 'reinstall installer verified')) {
+            Note 'reinstall skipped: the installer failed verification'
+        } else {
             Start-Process -FilePath $setup -ArgumentList '/S' -Wait | Out-Null
             Check 'reinstall restores the app' (Test-Path $installedExe) $installedExe
             $reinstalled = Get-DataSnapshot
             Check 'data still intact after reinstall' ($reinstalled.counts.analytics_metric_definition -eq $uninstallSnapshot.counts.analytics_metric_definition) "metrics=$($reinstalled.counts.analytics_metric_definition)"
-        } else {
-            Note "no installer at $setup; leaving the app uninstalled (reinstall with scripts\install-unpacked.ps1)"
         }
     }
 }

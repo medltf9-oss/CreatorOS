@@ -49,7 +49,6 @@ def _local_component(*, component_id: str = "sample", filename: str = "sample.bi
             "sha256": hashlib.sha256(payload).hexdigest(),
         },
         "signature": {"required": False, "expected_subject": None, "timestamp_required": False},
-        "install": {"technology": "none", "arguments": [], "silent": True, "elevates": False},
         "consent": {"required": False, "network_required": False, "summary": "fixture"},
         "license": {"name": "MIT"},
         "redistribution": {"approved_for_bundling": False, "detail": "fixture is not approved"},
@@ -302,7 +301,8 @@ def test_ffmpeg_size_match_is_present_but_not_verified_until_verify_runs(tmp_pat
     assert before["state"] == "ok"
     assert before["verified"] is False
     assert before["verification"] is None
-    assert "integrity is unverified until /verify runs" in before["detail"]
+    assert "integrity is unverified" in before["detail"]
+    assert "not run until /verify succeeds" in before["detail"]
 
     assert client.post("/setup/prerequisites/ffmpeg/verify", json={"path": str(target)}).json()["ok"] is True
 
@@ -326,7 +326,6 @@ def test_ollama_reports_installed_version_without_claiming_the_pinned_version(tm
             "sha256": hashlib.sha256(b"abc").hexdigest(),
         },
         "signature": {"required": False, "expected_subject": None, "timestamp_required": False},
-        "install": {"technology": "none", "arguments": [], "silent": True, "elevates": False},
         "consent": {"required": True, "network_required": True, "summary": "fixture"},
         "license": {"name": "MIT"},
         "redistribution": {"approved_for_bundling": False, "detail": "not approved"},
@@ -364,6 +363,19 @@ def test_ollama_reports_installed_version_without_claiming_the_pinned_version(tm
 # --- completion integrity ----------------------------------------------------------------------
 
 
+def test_missing_local_binary_names_the_expected_path_and_official_source(quiet_machine, monkeypatch, tmp_path, client):
+    missing = tmp_path / "tools" / "ffmpeg" / "bin" / "ffmpeg.exe"
+    monkeypatch.setattr(setup_routes, "_local_path", lambda component, settings: missing)
+    response = client.post("/setup/prerequisites/ffmpeg/verify", json={})
+    assert response.status_code == 409, (response.status_code, response.text)
+    message = response.json()["message"]
+    assert response.json()["code"] == "NO_LOCAL_FILE"
+    assert message.startswith("expected")
+    assert "ffmpeg.exe" in message
+    assert "tools" in message and "ffmpeg" in message
+    assert "https://www.gyan.dev/ffmpeg/builds/" in message
+
+
 def test_required_check_failure_blocks_completion_until_overridden(quiet_machine, monkeypatch, client):
     monkeypatch.setattr(
         detection_module,
@@ -374,9 +386,15 @@ def test_required_check_failure_blocks_completion_until_overridden(quiet_machine
     blocked = client.post("/setup/complete", json={})
     assert blocked.status_code == 409
     assert blocked.json()["code"] == "REQUIRED_CHECKS_FAILING"
-    assert "media.ffmpeg" in blocked.json()["message"]
+    assert blocked.json()["message"] == "media.ffmpeg"
+    guidance = blocked.json()["details"]["guidance"]
+    assert "tools" in guidance and "ffmpeg" in guidance
+    assert "gyan.dev" in guidance
     with session_scope() as db:
         assert state_service.read_state(db) is None
+
+    consent = client.post("/setup/prerequisites/ollama/consent", json={"accepted": True})
+    assert consent.status_code == 200, consent.text
 
     accepted = client.post("/setup/complete", json={"override_required_checks": True, "notes": "no media yet"})
     assert accepted.status_code == 200, accepted.text
@@ -397,6 +415,24 @@ def test_required_check_failure_blocks_completion_until_overridden(quiet_machine
     metadata = row[0] if isinstance(row[0], dict) else json.loads(row[0])
     assert metadata["override_required_checks"] is True
     assert "media.ffmpeg" in metadata["failed_checks"]
+    assert metadata["consents"]["ollama"]["accepted"] is True
+
+
+def test_detection_does_not_execute_an_unverified_ffmpeg(tmp_path: Path):
+    """Dropping a file at the pinned path must not run it before /verify hashes it."""
+    from creatoros.core.settings import Settings
+
+    bin_dir = tmp_path / "tools" / "ffmpeg" / "bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "ffmpeg.exe").write_bytes(b"MZ not a real executable")
+    (bin_dir / "ffprobe.exe").write_bytes(b"MZ not a real executable")
+
+    facts = detection_module.detect_ffmpeg(Settings(ffmpeg_dir=str(bin_dir)))
+
+    assert facts.present is True
+    assert facts.ffprobe_present is True
+    assert facts.version is None
+    assert facts.error is None
 
 
 def test_completion_is_idempotent_and_keeps_the_first_decision(quiet_machine, monkeypatch, client):

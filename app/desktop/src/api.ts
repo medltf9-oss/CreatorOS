@@ -309,7 +309,11 @@ export type PrerequisiteState = {
   redistribution_detail: string;
   download_url: string | null;
   release_page: string | null;
+  source_url: string | null;
   consent_required: boolean;
+  consent_summary: string;
+  consent_accepted: boolean;
+  consent_recorded_at: string | null;
 };
 
 export type SetupStatus = {
@@ -543,6 +547,13 @@ export class CreatorApi {
 
   prerequisites(signal?: AbortSignal) {
     return this.request<PrerequisiteCatalog>('/setup/prerequisites', { signal });
+  }
+
+  recordPrerequisiteConsent(componentId: string, accepted: boolean) {
+    return this.request<{ component_id: string; accepted: boolean; recorded_at: string }>(
+      `/setup/prerequisites/${encodeURIComponent(componentId)}/consent`,
+      { method: 'POST', body: JSON.stringify({ accepted }) },
+    );
   }
 
   verifyPrerequisite(componentId: string, path?: string) {

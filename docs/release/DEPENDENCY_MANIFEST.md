@@ -50,12 +50,15 @@ ignored by Git and must be re-downloaded and re-verified for a build.
 | `ffprobe.exe` size | 110,374,912 bytes |
 | `ffprobe.exe` SHA-256 | `DF0199F606FAA88E9AD192732A7C3987ACFB647663534C297772E17730611A08` |
 | Authenticode | Not signed |
-| Licence | **GPLv3** (`--enable-gpl --enable-version3 --enable-libx264`) |
+| Licence | **GPLv3 or later**, SPDX `GPL-3.0-or-later` (`--enable-gpl --enable-version3 --enable-libx264`) |
 | Source reference | <https://github.com/FFmpeg/FFmpeg/commit/74e4393595> |
 | Redistribution status | **Blocked for bundling.** GPLv3 requires corresponding source and notices for the binary and its statically linked libraries. The repository has no approved source archive or build scripts for this exact build. |
 
 The application uses `libx264` for H.264 output. An LGPL FFmpeg build is not a drop-in replacement
 because it would omit that encoder; changing the encoder is product work, not a packaging tweak.
+
+The machine-readable pin is `prerequisites.v1.json`; this table is explanatory, not a second gate
+input. The live gate validates the JSON size/SHA-256 values directly.
 
 ### CPython
 
@@ -66,6 +69,7 @@ because it would omit that encoder; changing the encoder is product work, not a 
 | Authenticode | `Valid`, `CN=Python Software Foundation` |
 | Redistribution | PSF licence permits redistribution; the interpreter and DLLs are copied unmodified by `scripts/build-backend.ps1` |
 | Status | Approved for the existing interpreter-payload layout, subject to the PSF licence notice |
+| Runtime pin | `app/backend/runtime-manifest.json`: 47 files with size and SHA-256; `scripts/build-backend.ps1` refuses a non-Valid PSF signature or a tree mismatch |
 
 ### Electron / Node / pnpm
 

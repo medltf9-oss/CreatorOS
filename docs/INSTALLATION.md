@@ -199,18 +199,24 @@ without touching your data; back up the data root and keep everything.
 ## F. Verifying the installation
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify-install.ps1
+# Local unsigned development build (refused without the explicit flag):
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify-install.ps1 -AllowUnsigned
+# Release evidence (requires Valid signature + RFC 3161 timestamp):
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify-install.ps1 -RequireSignature
 ```
 
-It installs the built release (or reports the Smart App Control block), then checks 12 things: the
-installer's exit code, both shortcuts and their icons, that the window opens, that the backend started
-from `resources\backend\python.exe`, that the migration ran before the server, that the database is
-present and at head. `-Uninstall` adds five more and confirms the data root survives the uninstall.
+Before running the installer, the harness re-hashes it against exactly one entry in
+`releases\<version>\SHA256SUMS.txt` and checks its Authenticode state. A replaced artifact, a missing
+manifest or a stale manifest is refused before any process starts; see
+`docs/release/ARTIFACT_VERIFICATION.md`. It then checks the installer's exit code, both shortcuts and
+their icons, that the window opens, that the backend started from `resources\backend\python.exe`,
+that the migration ran before the server, and that the database is present and at head. `-Uninstall`
+adds five more and confirms the data root survives the uninstall.
 
 For an installation that is already there, the deeper check is production health:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\production-health.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\production-health.ps1 -AllowUnsigned
 ```
 
 It launches the app **from the Desktop shortcut**, confirms the bundled backend starts by itself, checks

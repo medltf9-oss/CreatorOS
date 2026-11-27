@@ -15,10 +15,11 @@
 
     Why not PyInstaller (see docs/ADR/ADR-34-Release-Packaging.md):
 
-      * Smart App Control is ON on this machine and blocks every newly built unsigned executable.
-        A frozen bundle is such an executable; every copy of the Python interpreter keeps its
-        publisher signature and therefore keeps working. This is not a preference, it is the only
-        layout that runs here without changing an OS security setting.
+      * Smart App Control can block a newly built unsigned executable. A frozen bundle is such an
+        executable; every copy of the Python interpreter keeps its publisher signature and therefore
+        keeps working under SAC. This layout does not require changing an OS security setting. The
+        build machine's current SAC state is reported by `capture-security-state.ps1`; it is not
+        assumed to be on.
       * It is also more debuggable: a traceback from the shipped backend names a real file, and an
         operator can run it by hand with no build step.
       * The cost is size (110 MB vs 39 MB). The installer compresses it; the difference is not worth
@@ -47,6 +48,7 @@ if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
 }
 
 $backend = Join-Path $repo 'app\backend'
+$projectVersion = ((Select-String -Path (Join-Path $backend 'pyproject.toml') -Pattern '^version\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value)
 $venvPython = Join-Path $backend '.venv\Scripts\python.exe'
 $sitePackages = Join-Path $backend '.venv\Lib\site-packages'
 
@@ -54,6 +56,8 @@ function Write-Step($message) { Write-Host "==> $message" -ForegroundColor Cyan 
 
 if (-not (Test-Path $venvPython)) { throw "backend virtualenv python not found: $venvPython" }
 if (-not (Test-Path $sitePackages)) { throw "backend site-packages not found: $sitePackages" }
+& $venvPython (Join-Path $scriptDir 'backend_lock.py') --check
+if ($LASTEXITCODE -ne 0) { throw 'the backend environment does not match requirements-runtime.lock' }
 
 Write-Step 'locating the interpreter that owns the virtualenv'
 $basePrefix = & $venvPython -c "import sys; print(sys.base_prefix)"
@@ -68,11 +72,18 @@ $x = Join-Path $basePrefix "python$pyVersion.dll"
 if (-not (Test-Path $pythonExe)) { throw "python.exe not found in $basePrefix" }
 if (-not (Test-Path $x)) { throw "python$pyVersion.dll not found in $basePrefix" }
 
+Write-Step 'verifying the interpreter against the committed runtime manifest'
+& $venvPython -B (Join-Path $scriptDir 'runtime_manifest.py') --check --root $basePrefix
+if ($LASTEXITCODE -ne 0) { throw 'the base interpreter does not match app\backend\runtime-manifest.json' }
+
 Write-Step 'checking the interpreter signature'
 $sig = Get-AuthenticodeSignature $pythonExe
 Write-Host "    $pythonExe -> $($sig.Status) ($($sig.SignerCertificate.Subject))"
 if ($sig.Status -ne 'Valid') {
-    Write-Warning "the interpreter is not validly signed; Smart App Control may block the installed app"
+    throw "the interpreter is not validly signed ($($sig.Status)); refusing to ship it"
+}
+if (-not $sig.SignerCertificate -or $sig.SignerCertificate.Subject -notlike '*O=Python Software Foundation*') {
+    throw "the interpreter signer is not Python Software Foundation: $($sig.SignerCertificate.Subject)"
 }
 
 Write-Step "rebuilding $OutputRoot"
@@ -87,6 +98,10 @@ foreach ($dll in @("python$pyVersion.dll", 'python3.dll', 'vcruntime140.dll', 'v
 }
 Copy-Item (Join-Path $basePrefix 'DLLs') -Destination $OutputRoot -Recurse
 Copy-Item (Join-Path $basePrefix 'Lib') -Destination $OutputRoot -Recurse
+# The copied interpreter must still match the committed manifest. This catches a copy fault, a
+# substituted base directory, and any extra .exe/.dll/.pyd dropped into the runtime.
+& $venvPython -B (Join-Path $scriptDir 'runtime_manifest.py') --check --root $OutputRoot --strict-extras
+if ($LASTEXITCODE -ne 0) { throw 'the assembled interpreter does not match app\backend\runtime-manifest.json' }
 # LICENSE is required by the PSF licence when redistributing the interpreter.
 $license = Join-Path $basePrefix 'LICENSE.txt'
 if (Test-Path $license) { Copy-Item $license -Destination (Join-Path $OutputRoot 'PYTHON-LICENSE.txt') }
@@ -113,21 +128,30 @@ New-Item -ItemType Directory -Path $bundleSite -Force | Out-Null
 Copy-Item (Join-Path $sitePackages '*') -Destination $bundleSite -Recurse -Force
 # Editable-install hooks point at this machine's source tree and must never ship.
 Get-ChildItem $bundleSite -Filter '__editable__*' -ErrorAction SilentlyContinue | Remove-Item -Force
+# Bytecode caches belong to the developer machine; Smart App Control may also rename binaries it
+# blocked to *.sacblocked. Neither name is in a wheel RECORD, so neither may ship.
+Get-ChildItem $bundleSite -Recurse -Directory -Filter '__pycache__' -ErrorAction SilentlyContinue |
+    Remove-Item -Recurse -Force
+Get-ChildItem $bundleSite -Recurse -File -Filter '*.sacblocked' -ErrorAction SilentlyContinue |
+    Remove-Item -Force
 Remove-Item (Join-Path $bundleSite 'a1_coverage.pth') -ErrorAction SilentlyContinue
+# CPython's base Lib/site-packages carries this placeholder for pip installs. It belongs to no
+# distribution and nothing imports it, so it is removed rather than shipped unowned.
+Remove-Item (Join-Path $bundleSite 'README.txt') -ErrorAction SilentlyContinue
 
 # The virtualenv is a developer environment. Copying it wholesale ships pytest, coverage, ruff and
 # PyInstaller (including the four unsigned bootloader .exe files) into the product unless they are
 # removed explicitly. This list is the evidence-backed minimum: none of these modules is imported by
 # creatoros at runtime, and the smoke test below fails loudly if removing one broke the bundle.
 $devDistributions = @{
-    'pytest'                    = @('pytest', '_pytest')
+    'pytest'                    = @('pytest', '_pytest', 'py')
     'pytest-asyncio'            = @('pytest_asyncio')
     'pytest-cov'                = @('pytest_cov')
     'coverage'                  = @('coverage')
     'pyinstaller'               = @('PyInstaller', 'pyinstaller')
-    'pyinstaller-hooks-contrib' = @('pyinstaller_hooks_contrib')
+    'pyinstaller-hooks-contrib' = @('pyinstaller_hooks_contrib', '_pyinstaller_hooks_contrib')
     'altgraph'                  = @('altgraph')
-    'pywin32-ctypes'            = @('pywin32_ctypes')
+    'pywin32-ctypes'            = @('pywin32_ctypes', 'win32ctypes')
     'pefile'                    = @('pefile', 'peutils')
     'ordlookup'                 = @('ordlookup')
     'pygments'                  = @('pygments')
@@ -142,11 +166,20 @@ $devDistributions = @{
 $removed = 0
 foreach ($dist in $devDistributions.Keys) {
     foreach ($module in $devDistributions[$dist]) {
-        $target = Join-Path $bundleSite $module
-        if (Test-Path $target) { Remove-Item $target -Recurse -Force; $removed++ }
+        # Some packages install a single top-level module file (pefile.py, peutils.py) next to
+        # the directories; checking only the bare name left those files in the 1.0.0 bundle.
+        foreach ($candidate in @($module, "$module.py")) {
+            $target = Join-Path $bundleSite $candidate
+            if (Test-Path $target) { Remove-Item $target -Recurse -Force; $removed++ }
+        }
     }
+    # dist-info directories use the PEP 503 normalised name (pytest_asyncio-1.5.0.dist-info),
+    # while this table uses the project name (pytest-asyncio). Matching only hyphens left four
+    # metadata directories in the 1.0.0 bundle, and every inventory then reported those
+    # development packages as installed. Accept either separator.
+    $distPattern = '^' + ($dist -replace '-', '[-_]') + '-[0-9]'
     Get-ChildItem $bundleSite -Directory -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -match "^$([regex]::Escape($dist))-[0-9].*$" } |
+        Where-Object { $_.Name -match $distPattern } |
         ForEach-Object { Remove-Item $_.FullName -Recurse -Force; $removed++ }
 }
 # setuptools leaves a .pth shim behind that the interpreter executes on every start. Removing the
@@ -156,16 +189,44 @@ Remove-Item (Join-Path $bundleSite 'distutils-precedence.pth') -ErrorAction Sile
 # A silent reintroduction is worse than a larger bundle: refuse to build one.
 foreach ($dist in $devDistributions.Keys) {
     foreach ($module in $devDistributions[$dist]) {
-        if (Test-Path (Join-Path $bundleSite $module)) {
-            throw "development package '$module' leaked into the bundle"
+        foreach ($candidate in @($module, "$module.py")) {
+            if (Test-Path (Join-Path $bundleSite $candidate)) {
+                throw "development package '$candidate' leaked into the bundle"
+            }
         }
+    }
+    # A removed module with a surviving dist-info still looks installed to importlib.metadata and
+    # to every dependency inventory. Treat that as a leak, not as cosmetic leftovers.
+    $metadata = Get-ChildItem $bundleSite -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match ('^' + ($dist -replace '-', '[-_]') + '-[0-9]') }
+    if ($metadata) {
+        throw "development package metadata '$($metadata[0].Name)' leaked into the bundle"
     }
 }
 Write-Host "    pruned $removed development-only entries"
 
+# The virtualenv can contain packages that are neither development tooling nor runtime
+# dependencies. The lock is authoritative: replay and remove every other distribution, then refuse
+# to continue if any site-packages file is still unowned.
+Write-Step 'pruning packages outside the runtime lock'
+& $venvPython (Join-Path $scriptDir 'payload_prune.py') --payload $OutputRoot --lock (Join-Path $backend 'requirements-runtime.lock')
+if ($LASTEXITCODE -ne 0) { throw 'payload does not match the runtime lock after pruning' }
+
 Write-Step 'copying the creatoros package'
 Copy-Item (Join-Path $backend 'src\creatoros') -Destination $bundleSite -Recurse -Force
 Get-ChildItem $bundleSite -Recurse -Directory -Filter '__pycache__' | Remove-Item -Recurse -Force
+
+# The virtualenv may hold an editable install from an older release; its dist-info describes the
+# developer machine, not this payload. Remove it, then write canonical metadata at the project
+# version and hash the files actually shipped.
+Get-ChildItem $bundleSite -Directory -Filter 'creatoros_backend-*.dist-info' -ErrorAction SilentlyContinue |
+    Remove-Item -Recurse -Force
+$metadataScript = Join-Path $scriptDir 'payload_metadata.py'
+$bundlePython = Join-Path $OutputRoot 'python.exe'
+& $bundlePython -B $metadataScript --payload $OutputRoot --project $backend --version $projectVersion
+if ($LASTEXITCODE -ne 0) { throw 'first-party payload metadata generation failed' }
+& $bundlePython -B $metadataScript --check --payload $OutputRoot --project $backend
+if ($LASTEXITCODE -ne 0) { throw 'first-party payload metadata verification failed' }
 
 Write-Step 'copying the migration environment'
 Copy-Item (Join-Path $backend 'alembic.ini') -Destination $OutputRoot
@@ -175,6 +236,38 @@ Get-ChildItem (Join-Path $OutputRoot 'migrations') -Recurse -Directory -Filter '
 $bundleExe = Join-Path $OutputRoot 'python.exe'
 $size = [math]::Round(((Get-ChildItem $OutputRoot -Recurse -File | Measure-Object Length -Sum).Sum / 1MB), 1)
 Write-Host "    bundle: $OutputRoot ($size MB)"
+
+function Invoke-BundlePython {
+    param([string[]]$Arguments, [int]$TimeoutSeconds = 120)
+    # Start-Process can expose an empty ExitCode for a process whose redirected streams have already
+    # closed. A ProcessStartInfo object gives us the exit code and both streams deterministically.
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $bundleExe
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.CreateNoWindow = $true
+    $psi.Arguments = (($Arguments | ForEach-Object {
+        if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ }
+    }) -join ' ')
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    try {
+        $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+        $stderrTask = $proc.StandardError.ReadToEndAsync()
+        if (-not $proc.WaitForExit($TimeoutSeconds * 1000)) {
+            $proc.Kill()
+            throw "bundled interpreter timed out after $TimeoutSeconds s: $($Arguments -join ' ')"
+        }
+        $proc.WaitForExit()
+        return [pscustomobject]@{
+            ExitCode = $proc.ExitCode
+            StdOut = $stdoutTask.GetAwaiter().GetResult()
+            StdErr = $stderrTask.GetAwaiter().GetResult()
+        }
+    } finally {
+        $proc.Dispose()
+    }
+}
 
 if (-not $SkipVerify) {
     Write-Step 'verifying the bundle on an empty data root'
@@ -189,13 +282,15 @@ if (-not $SkipVerify) {
     $env:TMP = $env:TEMP
     $env:CREATOROS_DISABLE_AI = '1'
     try {
-        $info = & $bundleExe -m creatoros version 2>&1 | Out-String
-        Write-Host ($info.Trim())
-        if ($LASTEXITCODE -ne 0) { throw "bundled interpreter could not run 'creatoros version'" }
+        $created = Invoke-BundlePython -Arguments @('-m', 'creatoros', 'version') -TimeoutSeconds 60
+        Write-Host ($created.StdOut.Trim())
+        if ($created.ExitCode -ne 0) { throw "bundled interpreter could not run 'creatoros version':`n$($created.StdErr)" }
 
-        $migrated = & $bundleExe -m creatoros migrate 2>&1 | Out-String
-        if ($LASTEXITCODE -ne 0) { throw "bundled interpreter could not migrate an empty data root:`n$migrated" }
-        $parsed = (& $bundleExe -m creatoros version --json 2>&1 | Out-String) | ConvertFrom-Json
+        $migrated = Invoke-BundlePython -Arguments @('-m', 'creatoros', 'migrate') -TimeoutSeconds 180
+        if ($migrated.ExitCode -ne 0) { throw "bundled interpreter could not migrate an empty data root:`n$($migrated.StdErr)" }
+        $versioned = Invoke-BundlePython -Arguments @('-m', 'creatoros', 'version', '--json') -TimeoutSeconds 60
+        if ($versioned.ExitCode -ne 0) { throw "bundled interpreter could not report its version:`n$($versioned.StdErr)" }
+        $parsed = $versioned.StdOut | ConvertFrom-Json
         if (-not $parsed.revision) { throw "no migration revision after migrate" }
         if ($parsed.revision -ne $parsed.head) { throw "revision $($parsed.revision) is not head $($parsed.head)" }
         Write-Host "    migrated (empty) -> $($parsed.revision)"

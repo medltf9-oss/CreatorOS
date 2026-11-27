@@ -1,10 +1,7 @@
 # electron-builder configuration for CreatorOS.
 #
-# Build:
-#   powershell -ExecutionPolicy Bypass -File ..\..\scripts\build-release.ps1
-# or, having already run scripts/build-backend.ps1:
-#   npm run package
-#
+# Build (the only supported path; it runs the backend bundle, SBOM and release gate):
+#   powershell -ExecutionPolicy Bypass -File scripts\build-release.ps1
 # Target: a per-user NSIS installer (no administrator prompt, installs under
 # %LOCALAPPDATA%\Programs\CreatorOS, Desktop + Start Menu shortcuts).
 appId: com.creatoros.studio
@@ -65,14 +62,16 @@ win:
   # vendor signature is what lets the installed app start. The icon the user sees comes from the
   # shortcut (.lnk, set below) and from the window icon (electron/paths.cjs -> build/icon.ico).
   signAndEditExecutable: false
-  # No code-signing certificate is available for this build; see docs/RELEASE_NOTES_0.8.0.md.
-  verifyUpdateCodeSignature: false
+  # No update feed is configured. If one is added, electron-updater must keep signature
+  # verification on; turning it off would let a tampered update run as the user.
 
 nsis:
   oneClick: false
   perMachine: false
   allowElevation: false
-  allowToChangeInstallationDirectory: true
+  # Per-user installs live at a fixed %LOCALAPPDATA%\Programs\CreatorOS. Letting the directory
+  # move makes upgrades, the uninstaller and the data path disagree; moving it is not supported.
+  allowToChangeInstallationDirectory: false
   createDesktopShortcut: always
   createStartMenuShortcut: true
   shortcutName: CreatorOS

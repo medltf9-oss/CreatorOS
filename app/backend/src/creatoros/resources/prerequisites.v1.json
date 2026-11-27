@@ -1,11 +1,11 @@
 {
   "schema": "creatoros.prerequisites.v1",
   "updated": "2026-11-25",
-  "source": "docs/release/DEPENDENCY_MANIFEST.md",
+  "source": "CreatorOS release verification; docs/release/DEPENDENCY_MANIFEST.md is historical audit evidence",
   "notes": [
-    "Every byte count, hash and signer subject here was copied from docs/release/DEPENDENCY_MANIFEST.md,",
-    "which records what was actually verified on the audit machine. Changing a value here without",
-    "re-verifying the payload would turn a verification into a claim."
+    "This manifest is the single release-gate input for prerequisite version, size, SHA-256, signer,",
+    "consent and redistribution state. The FFmpeg and ffprobe values were re-hashed on the build machine.",
+    "Changing a value here without re-verifying the payload would turn a verification into a claim."
   ],
   "components": [
     {
@@ -28,12 +28,6 @@
         "required": true,
         "expected_subject": "CN=Ollama Inc., O=Ollama Inc., L=Toronto, S=Ontario, C=CA",
         "timestamp_required": true
-      },
-      "install": {
-        "technology": "Inno Setup",
-        "arguments": ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-"],
-        "silent": true,
-        "elevates": false
       },
       "consent": {
         "required": true,
@@ -58,7 +52,6 @@
       "acquisition": {
         "mode": "local",
         "filename": "ffmpeg.exe",
-        "companion_filenames": ["ffprobe.exe"],
         "relative_to": "tools/ffmpeg/bin",
         "size_bytes": 110590976,
         "sha256": "ed8f66cb877087a96f5bbb40a2944f0e764f2ad8870d5cb647360d912e62bc07",
@@ -69,21 +62,49 @@
         "expected_subject": null,
         "timestamp_required": false
       },
-      "install": {
-        "technology": "none",
-        "arguments": [],
-        "silent": true,
-        "elevates": false
-      },
       "consent": {
         "required": false,
         "network_required": false,
         "summary": "The media toolchain is expected on disk. It is not downloaded silently."
       },
       "license": {
-        "name": "GPLv3",
-        "spdx": "GPL-3.0-only",
+        "name": "GPLv3 or later",
+        "spdx": "GPL-3.0-or-later",
         "detail": "Built with --enable-gpl --enable-version3 --enable-libx264 and statically links libx264."
+      },
+      "redistribution": {
+        "approved_for_bundling": false,
+        "detail": "Blocked for bundling. GPLv3 needs corresponding source, build scripts and notices for this exact binary, which the repository does not yet have."
+      }
+    },
+    {
+      "id": "ffprobe",
+      "kind": "local-tool",
+      "display_name": "FFprobe",
+      "version": "9.1-essentials_build-www.gyan.dev",
+      "required": true,
+      "acquisition": {
+        "mode": "local",
+        "filename": "ffprobe.exe",
+        "relative_to": "tools/ffmpeg/bin",
+        "size_bytes": 110374912,
+        "sha256": "df0199f606faa88e9ad192732a7c3987acfb647663534c297772e17730611a08",
+        "source": "https://www.gyan.dev/ffmpeg/builds/"
+      },
+      "signature": {
+        "required": false,
+        "expected_subject": null,
+        "timestamp_required": false
+      },
+      "consent": {
+        "required": false,
+        "network_required": false,
+        "summary": "FFprobe is part of the same local FFmpeg build. It is verified against its own pinned SHA-256; a matching ffmpeg.exe size does not verify it."
+      },
+      "license": {
+        "name": "GPLv3 or later",
+        "spdx": "GPL-3.0-or-later",
+        "detail": "Same GPLv3 build as ffmpeg.exe; no separate redistribution approval."
       },
       "redistribution": {
         "approved_for_bundling": false,

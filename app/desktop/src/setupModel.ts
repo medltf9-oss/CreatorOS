@@ -280,20 +280,24 @@ const REQUIRED_PREFIX = 'REQUIRED_CHECKS_FAILING:';
 export type RequiredChecksFailure = { code: 'REQUIRED_CHECKS_FAILING'; ids: string[]; message: string };
 
 /**
- * Recognise the API's 409 for failing required checks. The message carries the ids, so the wizard can
- * name them instead of showing a generic error.
+ * Recognise the API's 409 for failing required checks. The envelope carries the code and the detail
+ * message names the check ids, so the wizard can name them instead of showing a generic error.
  */
 export function requiredChecksFailure(error: unknown): RequiredChecksFailure | null {
   if (!error || typeof error !== 'object') return null;
   const status = (error as { status?: unknown }).status;
+  const code = (error as { code?: unknown }).code;
   const message = (error as { message?: unknown }).message;
-  if (typeof message !== 'string' || !message.startsWith(REQUIRED_PREFIX)) return null;
   if (status !== undefined && status !== 409) return null;
-  const ids = message
-    .slice(REQUIRED_PREFIX.length)
+  const prefixed = typeof message === 'string' && message.startsWith(REQUIRED_PREFIX);
+  // The backend envelope splits "CODE: detail" into { code, message }, so the code is the primary
+  // signal; the prefixed form is kept for callers that surface the raw HTTPException string.
+  if (code !== 'REQUIRED_CHECKS_FAILING' && !prefixed) return null;
+  const detail = typeof message === 'string' ? (prefixed ? message.slice(REQUIRED_PREFIX.length) : message) : '';
+  const ids = detail
     .split(/[,\s]+/)
     .filter(Boolean);
-  return { code: 'REQUIRED_CHECKS_FAILING', ids, message };
+  return { code: 'REQUIRED_CHECKS_FAILING', ids, message: detail };
 }
 
 /**

@@ -135,10 +135,11 @@ cd app\desktop
 pnpm dev
 ```
 
-Build the renderer with `pnpm build`. Package the Windows installer with
-`pnpm package`; see [`docs/PHASE9_RELEASE.md`](docs/PHASE9_RELEASE.md) for the
-signed-release checklist and `scripts/build-release.ps1` for the automated
-path.
+Build the renderer with `pnpm build`. Build the Windows installer only through
+`scripts\build-release.ps1`; there is no `package` script, because a direct
+electron-builder run would bypass the backend provenance, SBOM, inventory and
+build-stamp checks. See [`docs/PHASE9_RELEASE.md`](docs/PHASE9_RELEASE.md) for
+the signed-release checklist.
 
 ## Tests and checks
 

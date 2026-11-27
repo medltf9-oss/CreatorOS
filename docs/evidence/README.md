@@ -34,7 +34,7 @@ Expected path: `docs/evidence/v1.0.0-clean-sac.json`.
   "tester": "<name or role, no personal address>",
   "windows": {
     "edition": "Windows 11 Pro",
-    "build": "22631",
+    "build": 22631,
     "architecture": "x64",
     "clean_install": true
   },
